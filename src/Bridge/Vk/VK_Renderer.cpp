@@ -50,6 +50,9 @@ void VK_Renderer::shutdown() {
 Status VK_Renderer::initialize() {
     m_device = m_context->getDevice();
 
+    m_descriptorManager = std::make_unique<VK_DescriptorManager>(m_device);
+    NX_RETURN_IF_ERROR(m_descriptorManager->initialize());
+
     NX_RETURN_IF_ERROR(createCommandPool());
     NX_RETURN_IF_ERROR(createGraphicsPipeline());
     NX_RETURN_IF_ERROR(createCommandBuffers());
@@ -59,6 +62,17 @@ Status VK_Renderer::initialize() {
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
+    vk::DescriptorSetLayoutBinding uboBinding;
+    uboBinding.binding = 0;
+    uboBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+    uboBinding.descriptorCount = 1;
+    uboBinding.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+
+    std::vector<vk::DescriptorSetLayoutBinding> bindings = { uboBinding };
+    auto layoutResult = m_descriptorManager->createLayout(bindings, true);
+    if (!layoutResult.ok()) return layoutResult.status();
+    vk::DescriptorSetLayout descriptorSetLayout = layoutResult.value();
+
     std::string vsCode;
     NX_ASSIGN_OR_RETURN(vsCode, ResourceLoader::loadTextFile("src/App/Shaders/Triangle.hlsl"));
 
@@ -120,6 +134,8 @@ Status VK_Renderer::createGraphicsPipeline() {
     dynamicState.pDynamicStates = dynamicStates.data();
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
 
     if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_pipelineLayout) != vk::Result::eSuccess) {
         return InternalError("Failed to create pipeline layout");
@@ -153,6 +169,7 @@ Status VK_Renderer::createGraphicsPipeline() {
 
     m_device.destroyShaderModule(fragShaderModule);
     m_device.destroyShaderModule(vertShaderModule);
+
 
     return OkStatus();
 }
@@ -254,6 +271,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     commandBuffer.beginRendering(&renderingInfo);
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
+
 
     vk::Viewport viewport;
     viewport.x = 0.0f;

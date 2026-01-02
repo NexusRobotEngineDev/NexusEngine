@@ -6,9 +6,8 @@ endif()
 
 
 if(NOT DEFINED VCPKG_TARGET_TRIPLET)
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(DetectTriplet)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    include(DetectTriplet)
 endif()
 
 set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/triplets" CACHE PATH "Overlay triplets")

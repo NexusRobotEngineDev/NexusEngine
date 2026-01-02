@@ -3,6 +3,8 @@
 #include "Base.h"
 #include "VK_Context.h"
 #include "VK_Swapchain.h"
+#include "VK_DescriptorManager.h"
+#include "Material.h"
 #include <vector>
 
 namespace Nexus {
@@ -52,8 +54,11 @@ private:
     vk::Device m_device;
 
     vk::CommandPool m_commandPool;
+    std::unique_ptr<VK_DescriptorManager> m_descriptorManager;
+
     vk::PipelineLayout m_pipelineLayout;
     vk::Pipeline m_graphicsPipeline;
+
     std::vector<vk::CommandBuffer> m_commandBuffers;
 
     std::vector<vk::Semaphore> m_imageAvailableSemaphores;

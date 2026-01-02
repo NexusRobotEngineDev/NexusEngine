@@ -9,7 +9,34 @@ SDL_Window_Wrapper::~SDL_Window_Wrapper() {
     shutdown();
 }
 
+/**
+ * @brief SDL 日志回调函数
+ */
+static void SDLCALL SDLLogCallback(void* userdata, int category, SDL_LogPriority priority, const char* message) {
+    switch (priority) {
+        case SDL_LOG_PRIORITY_VERBOSE:
+        case SDL_LOG_PRIORITY_DEBUG:
+            NX_CORE_DEBUG("SDL: {}", message);
+            break;
+        case SDL_LOG_PRIORITY_INFO:
+            NX_CORE_INFO("SDL: {}", message);
+            break;
+        case SDL_LOG_PRIORITY_WARN:
+            NX_CORE_WARN("SDL: {}", message);
+            break;
+        case SDL_LOG_PRIORITY_ERROR:
+        case SDL_LOG_PRIORITY_CRITICAL:
+            NX_CORE_ERROR("SDL: {}", message);
+            break;
+        default:
+            NX_CORE_TRACE("SDL: {}", message);
+            break;
+    }
+}
+
 Status SDL_Window_Wrapper::initialize() {
+    SDL_SetLogOutputFunction(SDLLogCallback, nullptr);
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         NX_CORE_ERROR("Failed to initialize SDL: {}", SDL_GetError());
         return InternalError(std::string("Failed to initialize SDL: ") + SDL_GetError());

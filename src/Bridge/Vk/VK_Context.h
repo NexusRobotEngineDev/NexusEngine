@@ -25,6 +25,11 @@ public:
     virtual Status initializeWindowSurface(void* windowNativeHandle) override;
 
     /**
+     * @brief 初始化无离屏/无窗口上下文 (用于测试)
+     */
+    Status initializeHeadless();
+
+    /**
      * @brief 同步 RHI 线程与逻辑线程 (汇聚段)
      */
     virtual void sync() override;

@@ -30,6 +30,12 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
     return OkStatus();
 }
 
+Status VK_Context::initializeHeadless() {
+    NX_RETURN_IF_ERROR(selectPhysicalDevice());
+    NX_RETURN_IF_ERROR(createLogicalDevice());
+    return OkStatus();
+}
+
 void VK_Context::sync() {
     if (m_device) {
         try {
@@ -147,12 +153,22 @@ Status VK_Context::createLogicalDevice() {
     vk::PhysicalDeviceVulkan13Features features13{};
     features13.dynamicRendering = VK_TRUE;
 
+    vk::PhysicalDeviceVulkan12Features features12{};
+    features12.pNext = &features13;
+    features12.descriptorIndexing = VK_TRUE;
+    features12.runtimeDescriptorArray = VK_TRUE;
+    features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    features12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+    features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+    features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+
     const std::vector<const char*> deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 
     vk::DeviceCreateInfo createInfo;
-    createInfo.pNext = &features13;
+    createInfo.pNext = &features12;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
     createInfo.pEnabledFeatures = &deviceFeatures;

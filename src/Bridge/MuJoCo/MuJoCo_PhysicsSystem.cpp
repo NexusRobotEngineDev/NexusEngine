@@ -10,8 +10,19 @@ MuJoCo_PhysicsSystem::~MuJoCo_PhysicsSystem() {
 }
 
 Status MuJoCo_PhysicsSystem::initialize() {
+    char error[1000] = "Could not load binary model";
 
-    NX_CORE_INFO("MuJoCo Physics System Initialized (Stub)");
+    const char* modelPath = "NexusEngine/src/Bridge/MuJoCo/models/test_scene.xml";
+
+    m_model = mj_loadXML(modelPath, nullptr, error, 1000);
+    if (!m_model) {
+        NX_CORE_ERROR("Failed to load MuJoCo model: {}", error);
+        return InternalError(std::string("Failed to load MuJoCo model: ") + error);
+    }
+
+    m_data = mj_makeData(m_model);
+
+    NX_CORE_INFO("MuJoCo Physics System Initialized with model: {}", modelPath);
     return OkStatus();
 }
 
