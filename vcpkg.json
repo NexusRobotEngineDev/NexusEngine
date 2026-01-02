@@ -1,0 +1,20 @@
+{
+  "name": "nexus-engine",
+  "version": "0.1.0",
+  "dependencies": [
+    "abseil",
+    "entt",
+    "gtest",
+    "mujoco",
+    "rmlui",
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
+    "shaderc",
+    "spdlog",
+    "vulkan"
+  ]
+}
