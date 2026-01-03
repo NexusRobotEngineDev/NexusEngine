@@ -74,7 +74,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     vk::DescriptorSetLayout descriptorSetLayout = layoutResult.value();
 
     std::string vsCode;
-    NX_ASSIGN_OR_RETURN(vsCode, ResourceLoader::loadTextFile("src/App/Shaders/Triangle.hlsl"));
+    NX_ASSIGN_OR_RETURN(vsCode, ResourceLoader::loadTextFile("Data/Shaders/Triangle.hlsl"));
 
     vk::ShaderModule vertShaderModule;
     NX_ASSIGN_OR_RETURN(vertShaderModule, VK_ShaderCompiler::compileLayer(m_device, vsCode, "VSMain", shaderc_vertex_shader));
