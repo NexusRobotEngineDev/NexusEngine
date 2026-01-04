@@ -27,12 +27,26 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
     NX_RETURN_IF_ERROR(createSurface(windowNativeHandle));
     NX_RETURN_IF_ERROR(selectPhysicalDevice());
     NX_RETURN_IF_ERROR(createLogicalDevice());
+
+    vk::CommandPoolCreateInfo poolInfo({}, m_graphicsQueueFamilyIndex);
+    m_commandPool = m_device.createCommandPool(poolInfo).value;
+
+    m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
+    NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
+
     return OkStatus();
 }
 
 Status VK_Context::initializeHeadless() {
     NX_RETURN_IF_ERROR(selectPhysicalDevice());
     NX_RETURN_IF_ERROR(createLogicalDevice());
+
+    vk::CommandPoolCreateInfo poolInfo({}, m_graphicsQueueFamilyIndex);
+    m_commandPool = m_device.createCommandPool(poolInfo).value;
+
+    m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
+    NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
+
     return OkStatus();
 }
 
@@ -47,6 +61,13 @@ void VK_Context::sync() {
 
 void VK_Context::shutdown() {
     if (m_device) {
+        if (m_bindlessManager) {
+            m_bindlessManager.reset();
+        }
+        if (m_commandPool) {
+            m_device.destroyCommandPool(m_commandPool);
+            m_commandPool = nullptr;
+        }
         m_device.destroy();
         m_device = nullptr;
     }
@@ -191,6 +212,38 @@ Status VK_Context::createLogicalDevice() {
 
     NX_CORE_INFO("Vulkan Logical Device created successfully (Graphics Family: {})", graphicsFamily);
     return OkStatus();
+}
+
+uint32_t VK_Context::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+    vk::PhysicalDeviceMemoryProperties memProperties = m_physicalDevice.getMemoryProperties();
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+vk::CommandBuffer VK_Context::beginSingleTimeCommands() {
+    vk::CommandBufferAllocateInfo allocInfo(m_commandPool, vk::CommandBufferLevel::ePrimary, 1);
+    vk::CommandBuffer commandBuffer = m_device.allocateCommandBuffers(allocInfo).value[0];
+
+    vk::CommandBufferBeginInfo beginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+    commandBuffer.begin(beginInfo);
+    return commandBuffer;
+}
+
+void VK_Context::endSingleTimeCommands(vk::CommandBuffer commandBuffer) {
+    commandBuffer.end();
+
+    vk::SubmitInfo submitInfo;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    m_graphicsQueue.submit(submitInfo, nullptr);
+    m_graphicsQueue.waitIdle();
+
+    m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(

@@ -1,4 +1,5 @@
 #pragma once
+#include "VK_BindlessManager.h"
 #include "../Interfaces.h"
 #include <vulkan/vulkan.hpp>
 #include <vector>
@@ -46,6 +47,23 @@ public:
     vk::SurfaceKHR getSurface() const { return m_surface; }
     virtual uint32_t getGraphicsQueueFamilyIndex() const override { return m_graphicsQueueFamilyIndex; }
 
+    VK_BindlessManager* getBindlessManager() const { return m_bindlessManager.get(); }
+
+    /**
+     * @brief 查找内存类型
+     */
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties);
+
+    /**
+     * @brief 开始单次执行命令
+     */
+    vk::CommandBuffer beginSingleTimeCommands();
+
+    /**
+     * @brief 结束单次执行命令并提交
+     */
+    void endSingleTimeCommands(vk::CommandBuffer commandBuffer);
+
     /**
      * @brief 供渲染器调用
      */
@@ -65,6 +83,8 @@ private:
     vk::Device m_device;
     vk::Queue m_graphicsQueue;
     uint32_t m_graphicsQueueFamilyIndex = 0;
+    vk::CommandPool m_commandPool;
+    std::unique_ptr<VK_BindlessManager> m_bindlessManager;
 
     const std::vector<const char*> m_validationLayers = {
         "VK_LAYER_KHRONOS_validation"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Base.h"
+#include "Texture.h"
 #include <string>
 
 namespace Nexus {
@@ -42,6 +43,17 @@ public:
     virtual Status initialize() = 0;
     virtual void update(float deltaTime) = 0;
     virtual void shutdown() = 0;
+};
+
+/**
+ * @brief 纹理接口
+ */
+class ITexture {
+public:
+    virtual ~ITexture() = default;
+    virtual uint32_t getWidth() const = 0;
+    virtual uint32_t getHeight() const = 0;
+    virtual TextureFormat getFormat() const = 0;
 };
 
 } // namespace Nexus

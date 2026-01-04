@@ -18,6 +18,10 @@ void VK_Renderer::shutdown() {
 
     deviceWaitIdle();
 
+    if (m_testTexture) {
+        m_testTexture.reset();
+    }
+
     for (size_t i = 0; i < m_renderFinishedSemaphores.size(); i++) {
         if (m_renderFinishedSemaphores[i]) m_device.destroySemaphore(m_renderFinishedSemaphores[i]);
     }
@@ -57,6 +61,23 @@ Status VK_Renderer::initialize() {
     NX_RETURN_IF_ERROR(createGraphicsPipeline());
     NX_RETURN_IF_ERROR(createCommandBuffers());
     NX_RETURN_IF_ERROR(createSyncObjects());
+
+    ImageData imageData;
+    auto imageRes = ResourceLoader::loadImage("Data/Textures/test.png");
+    if (imageRes.ok()) {
+        imageData = imageRes.value();
+    } else {
+        imageData.width = 2;
+        imageData.height = 2;
+        imageData.channels = 4;
+        imageData.pixels = {
+            255, 0, 0, 255,   0, 255, 0, 255,
+            0, 0, 255, 255,   255, 255, 255, 255
+        };
+    }
+
+    m_testTexture = std::make_unique<VK_Texture>(m_context);
+    NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
     return OkStatus();
 }
@@ -133,9 +154,21 @@ Status VK_Renderer::createGraphicsPipeline() {
     dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
     dynamicState.pDynamicStates = dynamicStates.data();
 
+    std::vector<vk::DescriptorSetLayout> setLayouts = {
+        m_context->getBindlessManager()->getLayout(),
+        descriptorSetLayout
+    };
+
+    vk::PushConstantRange pushConstantRange;
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(BindlessConstants);
+
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+    pipelineLayoutInfo.pSetLayouts = setLayouts.data();
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_pipelineLayout) != vk::Result::eSuccess) {
         return InternalError("Failed to create pipeline layout");
@@ -272,6 +305,15 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
 
+    vk::DescriptorSet bindlessSet = m_context->getBindlessManager()->getSet();
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &bindlessSet, 0, nullptr);
+
+    if (m_testTexture) {
+        BindlessConstants constants;
+        constants.textureIndex = m_testTexture->getBindlessTextureIndex();
+        constants.samplerIndex = m_testTexture->getBindlessSamplerIndex();
+        commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, constants);
+    }
 
     vk::Viewport viewport;
     viewport.x = 0.0f;

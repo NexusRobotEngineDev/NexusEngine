@@ -15,6 +15,7 @@
     },
     "shaderc",
     "spdlog",
+    "stb",
     "vulkan"
   ]
 }

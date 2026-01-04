@@ -2,8 +2,38 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 namespace Nexus {
+
+namespace {
+
+/**
+ * @brief 基于 STB 的图像读取器实现
+ */
+class STBImageReader : public IImageReader {
+public:
+    virtual StatusOr<ImageData> read(const std::vector<uint8_t>& data) override {
+        int width, height, channels;
+        unsigned char* pixels = stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &width, &height, &channels, 4);
+
+        if (!pixels) {
+            return InternalError("Failed to decode image using STB");
+        }
+
+        ImageData imageData;
+        imageData.width = static_cast<uint32_t>(width);
+        imageData.height = static_cast<uint32_t>(height);
+        imageData.channels = 4;
+        imageData.pixels.assign(pixels, pixels + (width * height * 4));
+
+        stbi_image_free(pixels);
+        return imageData;
+    }
+};
+
+} // namespace
 
 StatusOr<std::string> ResourceLoader::loadTextFile(const std::string& path) {
     std::ifstream file(path);
@@ -31,6 +61,14 @@ StatusOr<std::vector<uint8_t>> ResourceLoader::loadBinaryFile(const std::string&
     }
 
     return buffer;
+}
+
+StatusOr<ImageData> ResourceLoader::loadImage(const std::string& path) {
+    auto binaryRes = loadBinaryFile(path);
+    if (!binaryRes.ok()) return binaryRes.status();
+
+    STBImageReader reader;
+    return reader.read(binaryRes.value());
 }
 
 } // namespace Nexus

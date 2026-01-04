@@ -5,6 +5,7 @@
 #include "VK_Swapchain.h"
 #include "VK_DescriptorManager.h"
 #include "Material.h"
+#include "VK_Texture.h"
 #include <vector>
 
 namespace Nexus {
@@ -64,6 +65,13 @@ private:
     std::vector<vk::Semaphore> m_imageAvailableSemaphores;
     std::vector<vk::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::Fence> m_inFlightFences;
+
+    std::unique_ptr<VK_Texture> m_testTexture;
+
+    struct BindlessConstants {
+        uint32_t textureIndex;
+        uint32_t samplerIndex;
+    };
 
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;

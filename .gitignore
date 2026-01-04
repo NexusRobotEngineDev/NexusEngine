@@ -3,3 +3,4 @@ build-windows-release
 build-vs2022-debug
 build-vs2022-release
 .idea
+NexusEngine.log

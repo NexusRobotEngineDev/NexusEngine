@@ -5,7 +5,22 @@ struct VSInput {
 struct PSInput {
     float4 Pos : SV_POSITION;
     float4 Color : COLOR0;
+    float2 UV : TEXCOORD0;
 };
+
+struct BindlessConstants {
+    uint textureIndex;
+    uint samplerIndex;
+};
+
+[[vk::push_constant]]
+BindlessConstants constants;
+
+[[vk::binding(0, 0)]]
+SamplerState samplers[];
+
+[[vk::binding(1, 0)]]
+Texture2D textures[];
 
 PSInput VSMain(VSInput input) {
     PSInput output;
@@ -14,17 +29,18 @@ PSInput VSMain(VSInput input) {
         float2(0.5, 0.5),
         float2(-0.5, 0.5)
     };
-    float4 colors[3] = {
-        float4(1.0, 0.0, 0.0, 1.0),
-        float4(0.0, 1.0, 0.0, 1.0),
-        float4(0.0, 0.0, 1.0, 1.0)
+    float2 uvs[3] = {
+        float2(0.5, 0.0),
+        float2(1.0, 1.0),
+        float2(0.0, 1.0)
     };
 
     output.Pos = float4(positions[input.VertexIndex], 0.0, 1.0);
-    output.Color = colors[input.VertexIndex];
+    output.Color = float4(1.0, 1.0, 1.0, 1.0);
+    output.UV = uvs[input.VertexIndex];
     return output;
 }
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    return input.Color;
+    return textures[constants.textureIndex].Sample(samplers[constants.samplerIndex], input.UV);
 }

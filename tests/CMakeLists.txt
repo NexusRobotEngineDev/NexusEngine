@@ -8,6 +8,8 @@ add_executable(NexusTests
     Bridge/Test_Threading_Safety.cpp
     Bridge/Test_MuJoCo_Physics.cpp
     Bridge/Test_Material_System.cpp
+    Bridge/Test_Texture_Loading.cpp
+    Bridge/Test_Bindless.cpp
 )
 
 target_link_libraries(NexusTests PRIVATE

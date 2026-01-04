@@ -2,6 +2,7 @@
 #include "Base.h"
 #include <string>
 #include <vector>
+#include "ImageReader.h"
 
 namespace Nexus {
 
@@ -22,6 +23,12 @@ public:
      * @param path 文件相对于项目根目录的路径
      */
     static StatusOr<std::vector<uint8_t>> loadBinaryFile(const std::string& path);
+
+    /**
+     * @brief 加载图像数据
+     * @param path 文件路径
+     */
+    static StatusOr<ImageData> loadImage(const std::string& path);
 };
 
 } // namespace Nexus
