@@ -35,7 +35,7 @@ class RHIThread : public Thread {
 public:
     RHIThread(VK_Context* context) : m_context(context), m_renderer(nullptr) {}
 
-    void setRenderer(VK_Renderer* renderer) { m_renderer = renderer; }
+    void setRenderer(IRenderer* renderer) { m_renderer = renderer; }
 
     void pushCommand(const RenderCommand& cmd) {
         while (!m_queue.push(cmd)) {
@@ -100,7 +100,7 @@ private:
     }
 
     VK_Context* m_context;
-    VK_Renderer* m_renderer;
+    IRenderer* m_renderer;
     SPSCQueue<RenderCommand, 1024> m_queue;
 
     std::atomic<bool> m_syncRequested{false};

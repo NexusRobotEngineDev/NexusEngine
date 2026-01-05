@@ -353,15 +353,18 @@ Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
 }
 
 Status VK_Renderer::renderFrame() {
-    if (m_currentFrame >= m_inFlightFences.size()) {
-        return InternalError("m_currentFrame out of range");
-    }
+    uint32_t imageIndex;
+    NX_RETURN_IF_ERROR(beginFrame(imageIndex));
+    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
+    endFrame(imageIndex);
+    return OkStatus();
+}
 
+Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
     if (m_device.waitForFences(1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
         return InternalError("Wait for fences failed");
     }
 
-    uint32_t imageIndex;
     vk::Result acquireResult = m_device.acquireNextImageKHR(
         m_swapchain->getHandle(),
         UINT64_MAX,
@@ -371,8 +374,9 @@ Status VK_Renderer::renderFrame() {
     );
 
     if (acquireResult == vk::Result::eErrorOutOfDateKHR) {
-        return OkStatus();
-    } else if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) {
+        return Status(absl::StatusCode::kUnavailable, "Swapchain out of date");
+    }
+    if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) {
         return InternalError("Failed to acquire swap chain image");
     }
 
@@ -381,8 +385,11 @@ Status VK_Renderer::renderFrame() {
     }
 
     m_commandBuffers[m_currentFrame].reset();
-    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
 
+    return OkStatus();
+}
+
+void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::SubmitInfo submitInfo;
     vk::Semaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
     vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
@@ -395,9 +402,7 @@ Status VK_Renderer::renderFrame() {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    if (m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]) != vk::Result::eSuccess) {
-        return InternalError("Failed to submit draw command buffer");
-    }
+    (void)m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
 
     vk::PresentInfoKHR presentInfo;
     presentInfo.waitSemaphoreCount = 1;
@@ -407,15 +412,9 @@ Status VK_Renderer::renderFrame() {
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
 
-    vk::Result result = m_context->getGraphicsQueue().presentKHR(&presentInfo);
-
-    if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR) {
-    } else if (result != vk::Result::eSuccess) {
-        return InternalError("Failed to present swap chain image");
-    }
+    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-    return OkStatus();
 }
 
 void VK_Renderer::deviceWaitIdle() {

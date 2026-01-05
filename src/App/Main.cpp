@@ -8,7 +8,7 @@
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
 #include "Vk/VK_Swapchain.h"
-#include "Vk/VK_Renderer.h"
+#include "RenderSystem.h"
 #endif
 
 using namespace Nexus;
@@ -25,7 +25,7 @@ std::atomic<bool> g_quit{false};
 
 #if ENABLE_VULKAN
 std::unique_ptr<VK_Swapchain> g_swapchain;
-std::unique_ptr<VK_Renderer> g_renderer;
+std::unique_ptr<Core::RenderSystem> g_renderer;
 #endif
 
 struct Position { float x, y; };
@@ -52,7 +52,7 @@ Status InitializeEngine() {
     g_swapchain = std::make_unique<VK_Swapchain>(vkContext->getInstance(), vkContext->getPhysicalDevice(), vkContext->getDevice(), vkContext->getSurface());
     NX_RETURN_IF_ERROR(g_swapchain->initialize(1280, 720));
 
-    g_renderer = std::make_unique<VK_Renderer>(vkContext, g_swapchain.get());
+    g_renderer = std::make_unique<Core::RenderSystem>(vkContext, g_swapchain.get());
     NX_RETURN_IF_ERROR(g_renderer->initialize());
 
     g_rhiThread = std::make_unique<RHIThread>(vkContext);

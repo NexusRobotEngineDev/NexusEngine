@@ -32,8 +32,9 @@ find_package(EnTT CONFIG REQUIRED)
 
 
 add_subdirectory(src/Bridge)
+add_subdirectory(src/Core)
 
 add_executable(NexusApp src/App/Main.cpp)
-target_link_libraries(NexusApp PRIVATE BridgeImpl Bridge)
+target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge)
 
 add_subdirectory(tests)

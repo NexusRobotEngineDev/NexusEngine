@@ -55,8 +55,14 @@ StatusOr<vk::DescriptorSetLayout> VK_DescriptorManager::createLayout(const std::
     vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo;
 
     if (isBindless) {
-        for (auto& flag : bindingFlags) {
-            flag = vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
+        for (size_t i = 0; i < bindings.size(); ++i) {
+            bindingFlags[i] = vk::DescriptorBindingFlagBits::ePartiallyBound;
+            if (bindings[i].descriptorType == vk::DescriptorType::eSampledImage ||
+                bindings[i].descriptorType == vk::DescriptorType::eSampler ||
+                bindings[i].descriptorType == vk::DescriptorType::eStorageImage) {
+                bindingFlags[i] |= vk::DescriptorBindingFlagBits::eUpdateAfterBind;
+            }
+            bindingFlags[i] |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount;
         }
         flagsInfo.bindingCount = static_cast<uint32_t>(bindingFlags.size());
         flagsInfo.pBindingFlags = bindingFlags.data();

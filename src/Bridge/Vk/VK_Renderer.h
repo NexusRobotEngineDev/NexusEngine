@@ -6,6 +6,7 @@
 #include "VK_DescriptorManager.h"
 #include "Material.h"
 #include "VK_Texture.h"
+#include "Interfaces.h"
 #include <vector>
 
 namespace Nexus {
@@ -13,7 +14,7 @@ namespace Nexus {
 /**
  * @brief Vulkan 渲染器实现
  */
-class VK_Renderer {
+class VK_Renderer : public IRenderer {
 public:
     VK_Renderer(VK_Context* context, VK_Swapchain* swapchain);
     ~VK_Renderer();
@@ -24,9 +25,23 @@ public:
     Status initialize();
 
     /**
-     * @brief 执行渲染一帧
+     * @brief 执行渲染一帧 (Legacy)
      */
-    Status renderFrame();
+    Status renderFrame() override;
+
+    /**
+     * @brief 开始帧记录
+     */
+    Status beginFrame(uint32_t& imageIndex);
+
+    /**
+     * @brief 结束帧记录并提交
+     */
+    void endFrame(uint32_t imageIndex);
+
+    vk::CommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
+    vk::PipelineLayout getPipelineLayout() const { return m_pipelineLayout; }
+    vk::Pipeline getGraphicsPipeline() const { return m_graphicsPipeline; }
 
     /**
      * @brief 处理窗口改变大小

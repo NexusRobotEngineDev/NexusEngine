@@ -147,10 +147,12 @@ Status VK_Context::selectPhysicalDevice() {
     }
 
     for (const auto& device : devices.value) {
+        auto props = device.getProperties();
+        auto features = device.getFeatures();
+        NX_CORE_INFO("Found GPU: {} (MDI: {})", props.deviceName.data(), features.multiDrawIndirect ? "Yes" : "No");
         m_physicalDevice = device;
         return OkStatus();
     }
-
     return NotFoundError("Failed to find a suitable GPU");
 }
 
@@ -169,8 +171,6 @@ Status VK_Context::createLogicalDevice() {
     float queuePriority = 1.0f;
     vk::DeviceQueueCreateInfo queueCreateInfo({}, graphicsFamily, 1, &queuePriority);
 
-    vk::PhysicalDeviceFeatures deviceFeatures{};
-
     vk::PhysicalDeviceVulkan13Features features13{};
     features13.dynamicRendering = VK_TRUE;
 
@@ -179,17 +179,33 @@ Status VK_Context::createLogicalDevice() {
     features12.descriptorIndexing = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
     features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
 
+    vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures{};
+    meshFeatures.pNext = &features12;
+    meshFeatures.meshShader = VK_TRUE;
+    meshFeatures.taskShader = VK_TRUE;
+
+
     const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_EXT_MESH_SHADER_EXTENSION_NAME,
+        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+        VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+        VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
     };
+    vk::PhysicalDeviceFeatures deviceFeatures{};
+    deviceFeatures.drawIndirectFirstInstance = VK_TRUE;
+    deviceFeatures.multiDrawIndirect = VK_TRUE;
+    deviceFeatures.samplerAnisotropy = VK_TRUE;
 
     vk::DeviceCreateInfo createInfo;
-    createInfo.pNext = &features12;
+    createInfo.pNext = &meshFeatures;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
     createInfo.pEnabledFeatures = &deviceFeatures;
@@ -229,19 +245,19 @@ vk::CommandBuffer VK_Context::beginSingleTimeCommands() {
     vk::CommandBuffer commandBuffer = m_device.allocateCommandBuffers(allocInfo).value[0];
 
     vk::CommandBufferBeginInfo beginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
-    commandBuffer.begin(beginInfo);
+    (void)commandBuffer.begin(beginInfo);
     return commandBuffer;
 }
 
 void VK_Context::endSingleTimeCommands(vk::CommandBuffer commandBuffer) {
-    commandBuffer.end();
+    (void)commandBuffer.end();
 
     vk::SubmitInfo submitInfo;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    m_graphicsQueue.submit(submitInfo, nullptr);
-    m_graphicsQueue.waitIdle();
+    (void)m_graphicsQueue.submit(submitInfo, nullptr);
+    (void)m_graphicsQueue.waitIdle();
 
     m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
 }

@@ -56,4 +56,16 @@ public:
     virtual TextureFormat getFormat() const = 0;
 };
 
+/**
+ * @brief 渲染器接口
+ */
+class IRenderer {
+public:
+    virtual ~IRenderer() = default;
+    virtual Status initialize() = 0;
+    virtual Status renderFrame() = 0;
+    virtual Status onResize(uint32_t width, uint32_t height) = 0;
+    virtual void shutdown() = 0;
+};
+
 } // namespace Nexus

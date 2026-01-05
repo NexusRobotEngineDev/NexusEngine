@@ -45,6 +45,7 @@ public:
     vk::Queue getGraphicsQueue() const { return m_graphicsQueue; }
     vk::Instance getInstance() const { return m_instance; }
     vk::SurfaceKHR getSurface() const { return m_surface; }
+    vk::CommandPool getCommandPool() const { return m_commandPool; }
     virtual uint32_t getGraphicsQueueFamilyIndex() const override { return m_graphicsQueueFamilyIndex; }
 
     VK_BindlessManager* getBindlessManager() const { return m_bindlessManager.get(); }
