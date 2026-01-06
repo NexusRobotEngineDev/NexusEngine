@@ -8,6 +8,7 @@
 #include "VK_Texture.h"
 #include "Interfaces.h"
 #include <vector>
+#include "VK_CommandBuffer.h"
 
 namespace Nexus {
 
@@ -33,13 +34,13 @@ public:
      * @brief 开始帧记录
      */
     Status beginFrame(uint32_t& imageIndex);
-
-    /**
-     * @brief 结束帧记录并提交
-     */
     void endFrame(uint32_t imageIndex);
 
-    vk::CommandBuffer getCurrentCommandBuffer() const { return m_commandBuffers[m_currentFrame]; }
+    ICommandBuffer* getCurrentCommandBuffer() override { return m_wrapperCommandBuffers[m_currentFrame].get(); }
+    uint32_t acquireNextImage() override;
+    void present(uint32_t imageIndex) override;
+    ITexture* getSwapchainTexture(uint32_t index) override;
+
     vk::PipelineLayout getPipelineLayout() const { return m_pipelineLayout; }
     vk::Pipeline getGraphicsPipeline() const { return m_graphicsPipeline; }
 
@@ -56,7 +57,7 @@ public:
     /**
      * @brief 关闭渲染器并释放资源
      */
-    void shutdown();
+    void shutdown() override;
 
 private:
     Status createCommandPool();
@@ -76,11 +77,13 @@ private:
     vk::Pipeline m_graphicsPipeline;
 
     std::vector<vk::CommandBuffer> m_commandBuffers;
+    std::vector<std::unique_ptr<VK_CommandBuffer>> m_wrapperCommandBuffers;
 
     std::vector<vk::Semaphore> m_imageAvailableSemaphores;
     std::vector<vk::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::Fence> m_inFlightFences;
-
+    std::vector<std::unique_ptr<VK_Texture>> m_swapchainTextures;
+    Status createSwapchainTextures();
     std::unique_ptr<VK_Texture> m_testTexture;
 
     struct BindlessConstants {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Base.h"
+#include "Interfaces.h"
 #include <vulkan/vulkan.hpp>
 
 namespace Nexus {
@@ -10,37 +11,19 @@ class VK_Context;
 /**
  * @brief Vulkan 缓冲区薄抽象
  */
-class VK_Buffer {
+class VK_Buffer : public IBuffer {
 public:
     VK_Buffer(VK_Context* context);
-    ~VK_Buffer();
-
-    /**
-     * @brief 创建缓冲区
-     * @param size 缓冲区大小
-     * @param usage 使用用途
-     * @param properties 内存属性
-     * @return 状态码
-     */
+    ~VK_Buffer() override;
+    void* map() override;
+    void unmap() override;
+    uint64_t getSize() const override { return (uint64_t)m_size; }
+    void* getNativeHandle() const override { return (void*)m_buffer; }
     Status create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties);
-
-    /**
-     * @brief 映射内存并拷贝数据
-     * @param data 数据指针
-     * @param size 数据大小
-     * @return 状态码
-     */
-    Status uploadData(const void* data, vk::DeviceSize size);
-
-    /**
-     * @brief 释放资源
-     */
+    Status uploadData(const void* data, uint64_t size) override;
     void destroy();
-
     vk::Buffer getHandle() const { return m_buffer; }
     vk::DeviceMemory getMemory() const { return m_memory; }
-    vk::DeviceSize getSize() const { return m_size; }
-
 private:
     VK_Context* m_context;
     vk::Buffer m_buffer;

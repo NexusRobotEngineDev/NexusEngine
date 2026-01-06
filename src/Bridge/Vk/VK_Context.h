@@ -49,6 +49,7 @@ public:
     virtual uint32_t getGraphicsQueueFamilyIndex() const override { return m_graphicsQueueFamilyIndex; }
 
     VK_BindlessManager* getBindlessManager() const { return m_bindlessManager.get(); }
+    virtual std::unique_ptr<IBuffer> createBuffer(uint64_t size, uint32_t usage, uint32_t properties) override;
 
     /**
      * @brief 查找内存类型

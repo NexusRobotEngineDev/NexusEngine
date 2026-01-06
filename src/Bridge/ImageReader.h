@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Base.h"
-#include "Texture.h"
+#include "CommonTypes.h"
 #include <memory>
 
 namespace Nexus {

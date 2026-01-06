@@ -9,6 +9,7 @@ StatusOr<vk::ShaderModule> VK_ShaderCompiler::compileLayer(vk::Device device, co
 
     options.SetSourceLanguage(shaderc_source_language_hlsl);
     options.SetOptimizationLevel(shaderc_optimization_level_performance);
+    options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
 
     shaderc::SpvCompilationResult module = compiler.CompileGlslToSpv(source, stage, "shader", entryPoint.c_str(), options);
 

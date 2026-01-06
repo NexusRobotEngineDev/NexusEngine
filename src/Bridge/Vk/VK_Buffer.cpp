@@ -41,25 +41,22 @@ Status VK_Buffer::create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::Me
 /**
  * @brief 将数据上传至缓冲区
  */
-Status VK_Buffer::uploadData(const void* data, vk::DeviceSize size) {
-    if (size > m_size) {
-        return InvalidArgumentError("Data size exceeds buffer size");
-    }
-
-    vk::Device device = m_context->getDevice();
-    void* mappedData;
-    if (device.mapMemory(m_memory, 0, size, {}, &mappedData) != vk::Result::eSuccess) {
-        return InternalError("Failed to map buffer memory");
-    }
+Status VK_Buffer::uploadData(const void* data, uint64_t size) {
+    if (size > (uint64_t)m_size) return InvalidArgumentError("Data size exceeds buffer size");
+    void* mappedData = map();
+    if (!mappedData) return InternalError("Failed to map buffer memory");
     memcpy(mappedData, data, (size_t)size);
-    device.unmapMemory(m_memory);
-
+    unmap();
     return OkStatus();
 }
-
-/**
- * @brief 销毁缓冲区与内存
- */
+void* VK_Buffer::map() {
+    void* data;
+    if (m_context->getDevice().mapMemory(m_memory, 0, m_size, {}, &data) != vk::Result::eSuccess) return nullptr;
+    return data;
+}
+void VK_Buffer::unmap() {
+    m_context->getDevice().unmapMemory(m_memory);
+}
 void VK_Buffer::destroy() {
     if (m_buffer) {
         m_context->getDevice().destroyBuffer(m_buffer);

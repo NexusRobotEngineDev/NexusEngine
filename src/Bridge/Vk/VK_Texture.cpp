@@ -97,7 +97,6 @@ Status VK_Texture::createSampler() {
 
 void VK_Texture::transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
     vk::CommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
-
     vk::ImageMemoryBarrier barrier;
     barrier.oldLayout = oldLayout;
     barrier.newLayout = newLayout;
@@ -109,10 +108,8 @@ void VK_Texture::transitionImageLayout(vk::Image image, vk::ImageLayout oldLayou
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
-
     vk::PipelineStageFlags sourceStage;
     vk::PipelineStageFlags destinationStage;
-
     if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
         barrier.srcAccessMask = {};
         barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
@@ -124,14 +121,11 @@ void VK_Texture::transitionImageLayout(vk::Image image, vk::ImageLayout oldLayou
         sourceStage = vk::PipelineStageFlagBits::eTransfer;
         destinationStage = vk::PipelineStageFlagBits::eFragmentShader;
     }
-
     commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, nullptr, nullptr, barrier);
     m_context->endSingleTimeCommands(commandBuffer);
 }
-
 void VK_Texture::copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height) {
     vk::CommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
-
     vk::BufferImageCopy region;
     region.bufferOffset = 0;
     region.bufferRowLength = 0;
@@ -142,9 +136,14 @@ void VK_Texture::copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t 
     region.imageSubresource.layerCount = 1;
     region.imageOffset = vk::Offset3D{0, 0, 0};
     region.imageExtent = vk::Extent3D{width, height, 1};
-
     commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
     m_context->endSingleTimeCommands(commandBuffer);
 }
-
+void VK_Texture::initializeFromExisting(vk::Image image, vk::ImageView view, vk::Format format, uint32_t width, uint32_t height) {
+    m_image = image;
+    m_view = view;
+    m_width = width;
+    m_height = height;
+    m_format = (format == vk::Format::eB8G8R8A8Unorm) ? TextureFormat::BGRA8_UNORM : TextureFormat::RGBA8_UNORM;
+}
 } // namespace Nexus

@@ -32,7 +32,7 @@ Status RenderSystem::initialize() {
     std::vector<uint32_t> indices = { 0, 1, 2 };
     uint32_t vOffset, iOffset;
     NX_RETURN_IF_ERROR(m_meshManager->addMesh(vertices, indices, vOffset, iOffset));
-    std::vector<vk::DrawIndexedIndirectCommand> commands = { { 3, 1, 0, 0, 0 }, { 3, 1, 0, 0, 1 }, { 3, 1, 0, 0, 2 } };
+    std::vector<DrawIndexedIndirectCommand> commands = { { 3, 1, 0, 0, 0 }, { 3, 1, 0, 0, 1 }, { 3, 1, 0, 0, 2 } };
     NX_RETURN_IF_ERROR(m_commandGenerator->updateCommands(commands));
     m_bridgeRenderer = std::make_unique<VK_Renderer>(m_context, m_swapchain);
     NX_ASSERT(m_bridgeRenderer, "VK_Renderer creation failed");
@@ -41,73 +41,55 @@ Status RenderSystem::initialize() {
 }
 
 Status RenderSystem::renderFrame() {
-    uint32_t imageIndex;
-    auto beginStatus = m_bridgeRenderer->beginFrame(imageIndex);
-    if (!beginStatus.ok()) return OkStatus();
-    vk::CommandBuffer cmd = m_bridgeRenderer->getCurrentCommandBuffer();
+    uint32_t imageIndex = m_bridgeRenderer->acquireNextImage();
+    ICommandBuffer* cmd = m_bridgeRenderer->getCurrentCommandBuffer();
     NX_ASSERT(cmd, "Command buffer must be valid");
 
-    vk::CommandBufferBeginInfo beginInfo;
-    (void)cmd.begin(beginInfo);
+    cmd->begin();
 
-    vk::Extent2D extent = m_swapchain->getExtent();
+    Extent2D extent = { m_swapchain->getExtent().width, m_swapchain->getExtent().height };
     NX_ASSERT(extent.width > 0 && extent.height > 0, "Swapchain extent must be positive");
-    vk::ImageMemoryBarrier barrier;
-    barrier.srcAccessMask = {};
-    barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-    barrier.oldLayout = vk::ImageLayout::eUndefined;
-    barrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = m_swapchain->getImages()[imageIndex];
-    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eColorAttachmentOutput, {}, 0, nullptr, 0, nullptr, 1, &barrier);
 
-    vk::RenderingAttachmentInfo colorAttachment;
-    colorAttachment.imageView = m_swapchain->getImageViews()[imageIndex];
-    NX_ASSERT(colorAttachment.imageView, "Swapchain image view must be valid");
-    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
-    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    colorAttachment.clearValue.color = vk::ClearColorValue(std::array<float, 4>{0.1f, 0.1f, 0.2f, 1.0f});
 
-    vk::RenderingInfo renderingInfo;
-    renderingInfo.renderArea = vk::Rect2D({0, 0}, extent);
+    RenderingInfo renderingInfo;
+    renderingInfo.renderArea = { {0, 0}, extent };
     renderingInfo.layerCount = 1;
-    renderingInfo.colorAttachmentCount = 1;
-    renderingInfo.pColorAttachments = &colorAttachment;
 
-    vk::Viewport viewport(0.0f, (float)extent.height, (float)extent.width, -(float)extent.height, 0.0f, 1.0f);
-    cmd.setViewport(0, 1, &viewport);
-    vk::Rect2D scissor({0, 0}, extent);
-    cmd.setScissor(0, 1, &scissor);
+    ITexture* swapchainTex = m_bridgeRenderer->getSwapchainTexture(imageIndex);
+    cmd->transitionImageLayout(swapchainTex, ImageLayout::Undefined, ImageLayout::ColorAttachmentOptimal);
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_bridgeRenderer->getGraphicsPipeline());
-    vk::Buffer vBuffer = m_meshManager->getVertexBuffer()->getHandle();
-    vk::DeviceSize offset = 0;
-    cmd.bindVertexBuffers(0, 1, &vBuffer, &offset);
-    cmd.bindIndexBuffer(m_meshManager->getIndexBuffer()->getHandle(), 0, vk::IndexType::eUint32);
-    vk::DescriptorSet bindlessSet = m_context->getBindlessManager()->getSet();
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_bridgeRenderer->getPipelineLayout(), 0, 1, &bindlessSet, 0, nullptr);
-    cmd.beginRendering(&renderingInfo);
-    NX_ASSERT(m_commandGenerator->getIndirectBuffer(), "Indirect buffer must be valid");
-    vk::Buffer indirectBuf = m_commandGenerator->getIndirectBuffer()->getHandle();
-    NX_ASSERT(indirectBuf, "Vulkan indirect buffer handle must be valid");
+    RenderingAttachment colorAttachment;
+    colorAttachment.texture = swapchainTex;
+    colorAttachment.layout = ImageLayout::ColorAttachmentOptimal;
+    colorAttachment.loadOp = AttachmentLoadOp::Clear;
+    colorAttachment.storeOp = AttachmentStoreOp::Store;
+    colorAttachment.clearValue.color = { {0.1f, 0.1f, 0.2f, 1.0f} };
+    renderingInfo.colorAttachments.push_back(colorAttachment);
+
+    Viewport viewport = { 0.0f, (float)extent.height, (float)extent.width, -(float)extent.height, 0.0f, 1.0f };
+    cmd->setViewport(viewport);
+    Rect2D scissor = { {0, 0}, extent };
+    cmd->setScissor(scissor);
+
+    cmd->bindPipeline(PipelineBindPoint::Graphics, m_bridgeRenderer->getGraphicsPipeline());
+    IBuffer* vBuffer = m_meshManager->getVertexBuffer();
+    cmd->bindVertexBuffers(0, vBuffer, 0);
+    cmd->bindIndexBuffer(m_meshManager->getIndexBuffer(), 0, IndexType::Uint32);
+
+    void* bindlessSet = m_context->getBindlessManager()->getSet();
+    void* pipelineLayout = (void*)m_bridgeRenderer->getPipelineLayout();
+    cmd->bindDescriptorSets(PipelineBindPoint::Graphics, pipelineLayout, 0, bindlessSet);
+
+    cmd->beginRendering(renderingInfo);
+    IBuffer* indirectBuf = m_commandGenerator->getIndirectBuffer();
     uint32_t count = m_commandGenerator->getCommandCount();
-    cmd.drawIndexedIndirect(indirectBuf, 0, count, sizeof(vk::DrawIndexedIndirectCommand));
-    cmd.endRendering();
+    cmd->drawIndexedIndirect(indirectBuf, 0, count, sizeof(DrawIndexedIndirectCommand));
+    cmd->endRendering();
 
-    barrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-    barrier.dstAccessMask = {};
-    barrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
-    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &barrier);
-    (void)cmd.end();
-    m_bridgeRenderer->endFrame(imageIndex);
+    cmd->transitionImageLayout(swapchainTex, ImageLayout::ColorAttachmentOptimal, ImageLayout::PresentSrc);
+
+    cmd->end();
+    m_bridgeRenderer->present(imageIndex);
     return OkStatus();
 }
 
@@ -127,6 +109,17 @@ void RenderSystem::shutdown() {
         m_bridgeRenderer.reset();
     }
 }
-
+ICommandBuffer* RenderSystem::getCurrentCommandBuffer() {
+    return m_bridgeRenderer->getCurrentCommandBuffer();
+}
+ITexture* RenderSystem::getSwapchainTexture(uint32_t index) {
+    return m_bridgeRenderer->getSwapchainTexture(index);
+}
+uint32_t RenderSystem::acquireNextImage() {
+    return m_bridgeRenderer->acquireNextImage();
+}
+void RenderSystem::present(uint32_t imageIndex) {
+    m_bridgeRenderer->present(imageIndex);
+}
 } // namespace Core
 } // namespace Nexus

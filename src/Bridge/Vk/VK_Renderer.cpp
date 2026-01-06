@@ -61,6 +61,7 @@ Status VK_Renderer::initialize() {
     NX_RETURN_IF_ERROR(createGraphicsPipeline());
     NX_RETURN_IF_ERROR(createCommandBuffers());
     NX_RETURN_IF_ERROR(createSyncObjects());
+    NX_RETURN_IF_ERROR(createSwapchainTextures());
 
     ImageData imageData;
     auto imageRes = ResourceLoader::loadImage("Data/Textures/test.png");
@@ -80,6 +81,23 @@ Status VK_Renderer::initialize() {
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
     return OkStatus();
+}
+
+Status VK_Renderer::createSwapchainTextures() {
+    auto images = m_swapchain->getImages();
+    auto views = m_swapchain->getImageViews();
+    m_swapchainTextures.clear();
+    for (size_t i = 0; i < images.size(); i++) {
+        auto tex = std::make_unique<VK_Texture>(m_context);
+        tex->initializeFromExisting(images[i], views[i], m_swapchain->getImageFormat(), m_swapchain->getExtent().width, m_swapchain->getExtent().height);
+        m_swapchainTextures.push_back(std::move(tex));
+    }
+    return OkStatus();
+}
+
+ITexture* VK_Renderer::getSwapchainTexture(uint32_t index) {
+    if (index >= m_swapchainTextures.size()) return nullptr;
+    return m_swapchainTextures[index].get();
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
@@ -230,6 +248,10 @@ Status VK_Renderer::createCommandBuffers() {
     if (result.result != vk::Result::eSuccess) return InternalError("Failed to allocate command buffers");
     m_commandBuffers = result.value;
 
+    for (auto cmd : m_commandBuffers) {
+        m_wrapperCommandBuffers.push_back(std::make_unique<VK_CommandBuffer>(cmd));
+    }
+
     return OkStatus();
 }
 
@@ -345,13 +367,10 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) return OkStatus();
-
     deviceWaitIdle();
     NX_RETURN_IF_ERROR(m_swapchain->recreate(width, height));
-
     return OkStatus();
 }
-
 Status VK_Renderer::renderFrame() {
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
@@ -359,36 +378,17 @@ Status VK_Renderer::renderFrame() {
     endFrame(imageIndex);
     return OkStatus();
 }
-
 Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
     if (m_device.waitForFences(1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
         return InternalError("Wait for fences failed");
     }
-
-    vk::Result acquireResult = m_device.acquireNextImageKHR(
-        m_swapchain->getHandle(),
-        UINT64_MAX,
-        m_imageAvailableSemaphores[m_currentFrame],
-        vk::Fence(),
-        &imageIndex
-    );
-
-    if (acquireResult == vk::Result::eErrorOutOfDateKHR) {
-        return Status(absl::StatusCode::kUnavailable, "Swapchain out of date");
-    }
-    if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) {
-        return InternalError("Failed to acquire swap chain image");
-    }
-
-    if (m_device.resetFences(1, &m_inFlightFences[m_currentFrame]) != vk::Result::eSuccess) {
-        return InternalError("Failed to reset fences");
-    }
-
+    vk::Result acquireResult = m_device.acquireNextImageKHR(m_swapchain->getHandle(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], vk::Fence(), &imageIndex);
+    if (acquireResult == vk::Result::eErrorOutOfDateKHR) return Status(absl::StatusCode::kUnavailable, "Swapchain out of date");
+    if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) return InternalError("Failed to acquire swap chain image");
+    if (m_device.resetFences(1, &m_inFlightFences[m_currentFrame]) != vk::Result::eSuccess) return InternalError("Failed to reset fences");
     m_commandBuffers[m_currentFrame].reset();
-
     return OkStatus();
 }
-
 void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::SubmitInfo submitInfo;
     vk::Semaphore waitSemaphores[] = { m_imageAvailableSemaphores[m_currentFrame] };
@@ -401,9 +401,7 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::Semaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
-
     (void)m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
-
     vk::PresentInfoKHR presentInfo;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
@@ -411,14 +409,25 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
-
     (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
-
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
-
-void VK_Renderer::deviceWaitIdle() {
-    (void)m_device.waitIdle();
+uint32_t VK_Renderer::acquireNextImage() {
+    uint32_t imageIndex;
+    (void)m_device.acquireNextImageKHR(m_swapchain->getHandle(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], nullptr, &imageIndex);
+    return imageIndex;
 }
-
+void VK_Renderer::present(uint32_t imageIndex) {
+    vk::PresentInfoKHR presentInfo;
+    presentInfo.waitSemaphoreCount = 1;
+    vk::Semaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    vk::SwapchainKHR swapchains[] = { m_swapchain->getHandle() };
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapchains;
+    presentInfo.pImageIndices = &imageIndex;
+    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+void VK_Renderer::deviceWaitIdle() { (void)m_device.waitIdle(); }
 } // namespace Nexus

@@ -1,6 +1,7 @@
 #pragma once
 #include "Base.h"
 #include <string>
+#include "CommonTypes.h"
 #include <vector>
 #include "ImageReader.h"
 

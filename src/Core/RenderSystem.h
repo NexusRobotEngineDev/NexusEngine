@@ -41,6 +41,10 @@ public:
      * @brief 关闭系统
      */
     void shutdown() override;
+    ICommandBuffer* getCurrentCommandBuffer() override;
+    ITexture* getSwapchainTexture(uint32_t index) override;
+    uint32_t acquireNextImage() override;
+    void present(uint32_t imageIndex) override;
 
 private:
     VK_Context* m_context;

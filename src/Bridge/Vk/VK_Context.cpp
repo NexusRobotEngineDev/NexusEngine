@@ -1,4 +1,6 @@
 #include "VK_Context.h"
+#include "VK_Buffer.h"
+#include "VK_Renderer.h"
 #include "Config.h"
 #include "Log.h"
 #include <iostream>
@@ -238,6 +240,11 @@ uint32_t VK_Context::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags
         }
     }
     return 0;
+}
+std::unique_ptr<IBuffer> VK_Context::createBuffer(uint64_t size, uint32_t usage, uint32_t properties) {
+    auto buffer = std::make_unique<VK_Buffer>(this);
+    (void)buffer->create((vk::DeviceSize)size, (vk::BufferUsageFlags)usage, (vk::MemoryPropertyFlags)properties);
+    return buffer;
 }
 
 vk::CommandBuffer VK_Context::beginSingleTimeCommands() {

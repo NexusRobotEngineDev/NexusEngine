@@ -3,13 +3,12 @@
 #include "Base.h"
 #include <vector>
 #include <memory>
-#include <vulkan/vulkan.hpp>
+#include "CommonTypes.h"
+
+#include "Interfaces.h"
+#include "CommonTypes.h"
 
 namespace Nexus {
-
-class VK_Context;
-class VK_Buffer;
-
 namespace Core {
 
 /**
@@ -17,7 +16,7 @@ namespace Core {
  */
 class DrawCommandGenerator {
 public:
-    DrawCommandGenerator(VK_Context* context);
+    DrawCommandGenerator(IContext* context);
     ~DrawCommandGenerator();
 
     /**
@@ -32,14 +31,14 @@ public:
      * @param commands 指令列表
      * @return 状态码
      */
-    Status updateCommands(const std::vector<vk::DrawIndexedIndirectCommand>& commands);
+    Status updateCommands(const std::vector<DrawIndexedIndirectCommand>& commands);
 
-    VK_Buffer* getIndirectBuffer() const { return m_indirectBuffer.get(); }
+    IBuffer* getIndirectBuffer() const { return m_indirectBuffer.get(); }
     uint32_t getCommandCount() const { return m_commandCount; }
 
 private:
-    VK_Context* m_context;
-    std::unique_ptr<VK_Buffer> m_indirectBuffer;
+    IContext* m_context;
+    std::unique_ptr<IBuffer> m_indirectBuffer;
     uint32_t m_commandCount = 0;
 };
 

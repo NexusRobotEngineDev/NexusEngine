@@ -4,11 +4,9 @@
 #include <memory>
 #include <vector>
 
+#include "Interfaces.h"
+
 namespace Nexus {
-
-class VK_Context;
-class VK_Buffer;
-
 namespace Core {
 
 /**
@@ -16,7 +14,7 @@ namespace Core {
  */
 class MeshManager {
 public:
-    MeshManager(VK_Context* context);
+    MeshManager(IContext* context);
     ~MeshManager();
 
     /**
@@ -30,13 +28,13 @@ public:
      */
     Status addMesh(const std::vector<float>& vertices, const std::vector<uint32_t>& indices, uint32_t& outVertexOffset, uint32_t& outIndexOffset);
 
-    VK_Buffer* getVertexBuffer() const { return m_vertexBuffer.get(); }
-    VK_Buffer* getIndexBuffer() const { return m_indexBuffer.get(); }
+    IBuffer* getVertexBuffer() const { return m_vertexBuffer.get(); }
+    IBuffer* getIndexBuffer() const { return m_indexBuffer.get(); }
 
 private:
-    VK_Context* m_context;
-    std::unique_ptr<VK_Buffer> m_vertexBuffer;
-    std::unique_ptr<VK_Buffer> m_indexBuffer;
+    IContext* m_context;
+    std::unique_ptr<IBuffer> m_vertexBuffer;
+    std::unique_ptr<IBuffer> m_indexBuffer;
 
     uint32_t m_currentVertexOffset = 0;
     uint32_t m_currentIndexOffset = 0;
