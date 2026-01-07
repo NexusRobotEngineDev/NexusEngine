@@ -10,6 +10,7 @@ add_executable(NexusTests
     Bridge/Test_Material_System.cpp
     Bridge/Test_Texture_Loading.cpp
     Bridge/Test_Bindless.cpp
+    Bridge/Test_Headless_Rendering.cpp
 )
 
 target_link_libraries(NexusTests PRIVATE

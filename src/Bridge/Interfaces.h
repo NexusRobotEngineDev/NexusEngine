@@ -19,10 +19,13 @@ public:
     virtual ~IContext() = default;
     virtual Status initialize() = 0;
     virtual Status initializeWindowSurface(void* windowNativeHandle) = 0;
+    virtual Status initializeHeadless() = 0;
     virtual void sync() = 0;
     virtual void shutdown() = 0;
     virtual uint32_t getGraphicsQueueFamilyIndex() const = 0;
     virtual std::unique_ptr<IBuffer> createBuffer(uint64_t size, uint32_t usage, uint32_t properties) = 0;
+    virtual std::unique_ptr<ITexture> createTexture(const ImageData& imageData, TextureUsage usage) = 0;
+    virtual std::unique_ptr<ITexture> createTexture(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) = 0;
 };
 
 /**
@@ -56,6 +59,7 @@ public:
     virtual void bindIndexBuffer(IBuffer* buffer, uint64_t offset, IndexType indexType) = 0;
     virtual void bindDescriptorSets(PipelineBindPoint bindPoint, void* layout, uint32_t firstSet, void* descriptorSet) = 0;
     virtual void drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) = 0;
+    virtual void copyTextureToBuffer(ITexture* texture, IBuffer* buffer) = 0;
 };
 
 /**

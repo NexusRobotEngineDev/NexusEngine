@@ -69,7 +69,23 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     m_view = device.createImageView(viewInfo).value;
 
     m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
-
+    return createSampler();
+}
+Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) {
+    auto device = m_context->getDevice();
+    m_width = width;
+    m_height = height;
+    m_format = format;
+    vk::Format vkFormat = (format == TextureFormat::BGRA8_UNORM) ? vk::Format::eB8G8R8A8Unorm : vk::Format::eR8G8B8A8Unorm;
+    vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vkFormat, {m_width, m_height, 1}, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
+    if (usage == TextureUsage::Attachment) imageInfo.usage |= vk::ImageUsageFlagBits::eColorAttachment;
+    m_image = device.createImage(imageInfo).value;
+    vk::MemoryRequirements memReq = device.getImageMemoryRequirements(m_image);
+    m_memory = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)}).value;
+    device.bindImageMemory(m_image, m_memory, 0);
+    vk::ImageViewCreateInfo viewInfo({}, m_image, vk::ImageViewType::e2D, vkFormat, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+    m_view = device.createImageView(viewInfo).value;
+    if (m_context->getBindlessManager()) m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
     return createSampler();
 }
 

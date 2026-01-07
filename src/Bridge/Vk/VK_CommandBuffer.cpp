@@ -127,4 +127,10 @@ void VK_CommandBuffer::drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uin
     m_cmd.drawIndexedIndirect(vkBuffer->getHandle(), offset, drawCount, stride);
 }
 
+void VK_CommandBuffer::copyTextureToBuffer(ITexture* texture, IBuffer* buffer) {
+    auto* vkT = static_cast<VK_Texture*>(texture);
+    auto* vkB = static_cast<VK_Buffer*>(buffer);
+    vk::BufferImageCopy reg(0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {vkT->getWidth(), vkT->getHeight(), 1});
+    m_cmd.copyImageToBuffer(vkT->getImage(), vk::ImageLayout::eTransferSrcOptimal, vkB->getHandle(), 1, &reg);
+}
 } // namespace Nexus

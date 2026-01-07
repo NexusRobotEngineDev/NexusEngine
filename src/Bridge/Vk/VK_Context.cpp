@@ -1,6 +1,7 @@
 #include "VK_Context.h"
 #include "VK_Buffer.h"
 #include "VK_Renderer.h"
+#include "VK_Texture.h"
 #include "Config.h"
 #include "Log.h"
 #include <iostream>
@@ -20,6 +21,7 @@ VK_Context::~VK_Context() {
 }
 
 Status VK_Context::initialize() {
+    NX_CORE_INFO("Initializing Vulkan Context - Creating Instance");
     NX_RETURN_IF_ERROR(createInstance());
     setupDebugMessenger();
     return OkStatus();
@@ -40,15 +42,16 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
 }
 
 Status VK_Context::initializeHeadless() {
+    NX_CORE_INFO("Initializing Headless Context");
     NX_RETURN_IF_ERROR(selectPhysicalDevice());
     NX_RETURN_IF_ERROR(createLogicalDevice());
-
+    NX_CORE_INFO("Creating Command Pool");
     vk::CommandPoolCreateInfo poolInfo({}, m_graphicsQueueFamilyIndex);
     m_commandPool = m_device.createCommandPool(poolInfo).value;
-
+    NX_CORE_INFO("Initializing Bindless Manager");
     m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
     NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
-
+    NX_CORE_INFO("Headless Context Initialized Successfully");
     return OkStatus();
 }
 
@@ -98,12 +101,19 @@ Status VK_Context::createInstance() {
 
     std::vector<const char*> extensions;
     #ifdef ENABLE_SDL
-    uint32_t sdlExtensionCount = 0;
-    const char* const* sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
-    if (sdlExtensions) {
-        for (uint32_t i = 0; i < sdlExtensionCount; i++) {
-            extensions.push_back(sdlExtensions[i]);
+    if (SDL_WasInit(SDL_INIT_VIDEO)) {
+        NX_CORE_INFO("Fetching SDL Instance Extensions");
+        uint32_t sdlExtensionCount = 0;
+        const char* const* sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
+        if (sdlExtensions) {
+            NX_CORE_INFO("SDL Extensions found: {}", sdlExtensionCount);
+            for (uint32_t i = 0; i < sdlExtensionCount; i++) {
+                extensions.push_back(sdlExtensions[i]);
+                NX_CORE_INFO("  - {}", sdlExtensions[i]);
+            }
         }
+    } else {
+        NX_CORE_INFO("SDL Video not initialized, skipping extensions (Headless mode suggested)");
     }
     #endif
 
@@ -193,14 +203,14 @@ Status VK_Context::createLogicalDevice() {
     meshFeatures.taskShader = VK_TRUE;
 
 
-    const std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    std::vector<const char*> deviceExtensions = {
         VK_EXT_MESH_SHADER_EXTENSION_NAME,
         VK_KHR_SPIRV_1_4_EXTENSION_NAME,
         VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
         VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
     };
+    if (m_surface) deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.drawIndirectFirstInstance = VK_TRUE;
     deviceFeatures.multiDrawIndirect = VK_TRUE;
@@ -247,6 +257,16 @@ std::unique_ptr<IBuffer> VK_Context::createBuffer(uint64_t size, uint32_t usage,
     return buffer;
 }
 
+std::unique_ptr<ITexture> VK_Context::createTexture(const ImageData& imageData, TextureUsage usage) {
+    auto tex = std::make_unique<VK_Texture>(this);
+    (void)tex->create(imageData, usage);
+    return tex;
+}
+std::unique_ptr<ITexture> VK_Context::createTexture(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) {
+    auto tex = std::make_unique<VK_Texture>(this);
+    (void)tex->create(width, height, format, usage);
+    return tex;
+}
 vk::CommandBuffer VK_Context::beginSingleTimeCommands() {
     vk::CommandBufferAllocateInfo allocInfo(m_commandPool, vk::CommandBufferLevel::ePrimary, 1);
     vk::CommandBuffer commandBuffer = m_device.allocateCommandBuffers(allocInfo).value[0];

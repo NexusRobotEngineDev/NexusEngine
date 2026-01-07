@@ -20,6 +20,7 @@ public:
      * @param usage 纹理用途
      */
     Status create(const ImageData& imageData, TextureUsage usage);
+    Status create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage);
     void initializeFromExisting(vk::Image image, vk::ImageView view, vk::Format format, uint32_t width, uint32_t height);
 
     /**
