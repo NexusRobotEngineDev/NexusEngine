@@ -4,6 +4,7 @@
 #include "Entity.h"
 #include "Log.h"
 #include "PhysicsThread.h"
+#include "ResourceLoader.h"
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -61,10 +62,15 @@ Status InitializeEngine() {
 #endif
 
     g_physicsSystem = new PhysicsSystem();
-    NX_RETURN_IF_ERROR(g_physicsSystem->initialize());
-
-    g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem);
-    g_physicsThread->startThread();
+    auto physicsStatus = g_physicsSystem->initialize();
+    if (!physicsStatus.ok()) {
+        NX_CORE_WARN("Physics system unavailable: {}", physicsStatus.message());
+        delete g_physicsSystem;
+        g_physicsSystem = nullptr;
+    } else {
+        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem);
+        g_physicsThread->startThread();
+    }
 
     return OkStatus();
 }
@@ -141,6 +147,10 @@ void RunMainLoop() {
 int main(int argc, char* argv[]) {
     Log::init();
     Log::info("Nexus Engine Starting...");
+
+    if (auto status = ResourceLoader::initialize(); !status.ok()) {
+        Log::warn("ResourceLoader failed to detect base path: {}", status.message());
+    }
 
     if (auto status = InitializeEngine(); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());

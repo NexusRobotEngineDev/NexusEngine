@@ -1,7 +1,6 @@
 #include "MuJoCo_PhysicsSystem.h"
 #include "Log.h"
-#include <filesystem>
-#include <iostream>
+#include "ResourceLoader.h"
 
 namespace Nexus {
 
@@ -14,17 +13,18 @@ MuJoCo_PhysicsSystem::~MuJoCo_PhysicsSystem() {
 Status MuJoCo_PhysicsSystem::initialize() {
     char error[1000] = "Could not load binary model";
 
-    const char* modelPath = "Data/test_scene.xml";
+    std::string relativePath = "Data/Scenes/test_scene.xml";
+    std::string fullPath = ResourceLoader::getBasePath() + relativePath;
 
-    m_model = mj_loadXML(modelPath, nullptr, error, 1000);
+    m_model = mj_loadXML(fullPath.c_str(), nullptr, error, 1000);
     if (!m_model) {
-        NX_CORE_ERROR("Failed to load MuJoCo model: {} (Error: {})", modelPath, error);
+        NX_CORE_ERROR("Failed to load MuJoCo model: {} (Error: {})", fullPath, error);
         return InternalError(std::string("Failed to load MuJoCo model: ") + error);
     }
 
     m_data = mj_makeData(m_model);
 
-    NX_CORE_INFO("MuJoCo Physics System Initialized with model: {}", modelPath);
+    NX_CORE_INFO("MuJoCo Physics System Initialized with model: {}", fullPath);
     return OkStatus();
 }
 

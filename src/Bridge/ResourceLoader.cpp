@@ -4,8 +4,33 @@
 #include <filesystem>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#include "thirdparty.h"
 
 namespace Nexus {
+
+std::string ResourceLoader::s_basePath;
+
+Status ResourceLoader::initialize() {
+#ifdef ENABLE_SDL
+    const char* base = SDL_GetBasePath();
+    if (base) {
+        setBasePath(base);
+        SDL_free((void*)base);
+    }
+#endif
+    return OkStatus();
+}
+
+void ResourceLoader::setBasePath(const std::string& basePath) {
+    s_basePath = basePath;
+    if (!s_basePath.empty() && s_basePath.back() != '/' && s_basePath.back() != '\\') {
+        s_basePath += '/';
+    }
+}
+
+const std::string& ResourceLoader::getBasePath() {
+    return s_basePath;
+}
 
 namespace {
 
@@ -36,20 +61,21 @@ public:
 } // namespace
 
 StatusOr<std::string> ResourceLoader::loadTextFile(const std::string& path) {
-    std::ifstream file(path);
+    std::string fullPath = s_basePath + path;
+    std::ifstream file(fullPath);
     if (!file.is_open()) {
-        return NotFoundError("Failed to open text file: " + path);
+        return NotFoundError("Failed to open text file: " + fullPath);
     }
-
     std::stringstream buffer;
     buffer << file.rdbuf();
     return buffer.str();
 }
 
 StatusOr<std::vector<uint8_t>> ResourceLoader::loadBinaryFile(const std::string& path) {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    std::string fullPath = s_basePath + path;
+    std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        return NotFoundError("Failed to open binary file: " + path);
+        return NotFoundError("Failed to open binary file: " + fullPath);
     }
 
     std::streamsize size = file.tellg();

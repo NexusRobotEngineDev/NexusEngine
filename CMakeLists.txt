@@ -36,5 +36,10 @@ add_subdirectory(src/Core)
 
 add_executable(NexusApp src/App/Main.cpp)
 target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge)
+add_custom_command(TARGET NexusApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/Data
+        $<TARGET_FILE_DIR:NexusApp>/Data
+)
 
 add_subdirectory(tests)

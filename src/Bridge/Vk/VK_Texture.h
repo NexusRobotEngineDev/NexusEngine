@@ -59,6 +59,7 @@ private:
     vk::DeviceMemory m_memory;
     vk::ImageView m_view;
     vk::Sampler m_sampler;
+    bool m_ownsResources = false;
 
     uint32_t m_bindlessTextureIndex = 0;
     uint32_t m_bindlessSamplerIndex = 0;

@@ -11,11 +11,13 @@ add_executable(NexusTests
     Bridge/Test_Texture_Loading.cpp
     Bridge/Test_Bindless.cpp
     Bridge/Test_Headless_Rendering.cpp
+    Bridge/Test_Streaming.cpp
 )
 
 target_link_libraries(NexusTests PRIVATE
     GTest::gtest
     BridgeImpl
+    Core
 )
 
 include(GoogleTest)

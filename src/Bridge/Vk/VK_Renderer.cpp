@@ -6,7 +6,7 @@
 namespace Nexus {
 
 VK_Renderer::VK_Renderer(VK_Context* context, VK_Swapchain* swapchain)
-    : m_context(context), m_swapchain(swapchain) {
+    : m_context(context), m_swapchain(swapchain), m_device(context->getDevice()) {
 }
 
 VK_Renderer::~VK_Renderer() {
@@ -52,16 +52,11 @@ void VK_Renderer::shutdown() {
 }
 
 Status VK_Renderer::initialize() {
-    m_device = m_context->getDevice();
-
-    m_descriptorManager = std::make_unique<VK_DescriptorManager>(m_device);
-    NX_RETURN_IF_ERROR(m_descriptorManager->initialize());
-
-    NX_RETURN_IF_ERROR(createCommandPool());
-    NX_RETURN_IF_ERROR(createGraphicsPipeline());
-    NX_RETURN_IF_ERROR(createCommandBuffers());
-    NX_RETURN_IF_ERROR(createSyncObjects());
-    NX_RETURN_IF_ERROR(createSwapchainTextures());
+    if (auto status = createCommandPool(); !status.ok()) return status;
+    if (auto status = createGraphicsPipeline(); !status.ok()) return status;
+    if (auto status = createCommandBuffers(); !status.ok()) return status;
+    if (auto status = createSyncObjects(); !status.ok()) return status;
+    if (auto status = createSwapchainTextures(); !status.ok()) return status;
 
     ImageData imageData;
     auto imageRes = ResourceLoader::loadImage("Data/Textures/test.png");
@@ -101,17 +96,6 @@ ITexture* VK_Renderer::getSwapchainTexture(uint32_t index) {
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
-    vk::DescriptorSetLayoutBinding uboBinding;
-    uboBinding.binding = 0;
-    uboBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    uboBinding.descriptorCount = 1;
-    uboBinding.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
-
-    std::vector<vk::DescriptorSetLayoutBinding> bindings = { uboBinding };
-    auto layoutResult = m_descriptorManager->createLayout(bindings, true);
-    if (!layoutResult.ok()) return layoutResult.status();
-    vk::DescriptorSetLayout descriptorSetLayout = layoutResult.value();
-
     std::string vsCode;
     NX_ASSIGN_OR_RETURN(vsCode, ResourceLoader::loadTextFile("Data/Shaders/Triangle.hlsl"));
 
@@ -173,8 +157,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     dynamicState.pDynamicStates = dynamicStates.data();
 
     std::vector<vk::DescriptorSetLayout> setLayouts = {
-        m_context->getBindlessManager()->getLayout(),
-        descriptorSetLayout
+        m_context->getBindlessManager()->getLayout()
     };
 
     vk::PushConstantRange pushConstantRange;

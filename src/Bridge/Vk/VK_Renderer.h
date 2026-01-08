@@ -3,7 +3,6 @@
 #include "Base.h"
 #include "VK_Context.h"
 #include "VK_Swapchain.h"
-#include "VK_DescriptorManager.h"
 #include "Material.h"
 #include "VK_Texture.h"
 #include "Interfaces.h"
@@ -71,8 +70,6 @@ private:
     vk::Device m_device;
 
     vk::CommandPool m_commandPool;
-    std::unique_ptr<VK_DescriptorManager> m_descriptorManager;
-
     vk::PipelineLayout m_pipelineLayout;
     vk::Pipeline m_graphicsPipeline;
 

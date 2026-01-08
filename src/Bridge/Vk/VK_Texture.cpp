@@ -3,17 +3,20 @@
 
 namespace Nexus {
 
-VK_Texture::VK_Texture(VK_Context* context) : m_context(context), m_image(nullptr), m_memory(nullptr), m_view(nullptr), m_sampler(nullptr) {}
+VK_Texture::VK_Texture(VK_Context* context) : m_context(context), m_image(nullptr), m_memory(nullptr), m_view(nullptr), m_sampler(nullptr), m_ownsResources(false) {}
 
 VK_Texture::~VK_Texture() {
     auto device = m_context->getDevice();
     if (m_sampler) device.destroySampler(m_sampler);
-    if (m_view) device.destroyImageView(m_view);
-    if (m_image) device.destroyImage(m_image);
-    if (m_memory) device.freeMemory(m_memory);
+    if (m_ownsResources) {
+        if (m_view) device.destroyImageView(m_view);
+        if (m_image) device.destroyImage(m_image);
+        if (m_memory) device.freeMemory(m_memory);
+    }
 }
 
 Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
+    m_ownsResources = true;
     auto device = m_context->getDevice();
     m_width = imageData.width;
     m_height = imageData.height;
@@ -72,6 +75,7 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     return createSampler();
 }
 Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) {
+    m_ownsResources = true;
     auto device = m_context->getDevice();
     m_width = width;
     m_height = height;
@@ -156,6 +160,7 @@ void VK_Texture::copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t 
     m_context->endSingleTimeCommands(commandBuffer);
 }
 void VK_Texture::initializeFromExisting(vk::Image image, vk::ImageView view, vk::Format format, uint32_t width, uint32_t height) {
+    m_ownsResources = false;
     m_image = image;
     m_view = view;
     m_width = width;

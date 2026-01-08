@@ -5,6 +5,12 @@ add_library(Core STATIC
     DrawCommandGenerator.cpp
     MeshManager.h
     MeshManager.cpp
+    SceneTrunk.h
+    SceneTrunk.cpp
+    GlobalSceneTable.h
+    GlobalSceneTable.cpp
+    StreamingManager.h
+    StreamingManager.cpp
 )
 
 target_link_libraries(Core PUBLIC BridgeImpl Bridge)
