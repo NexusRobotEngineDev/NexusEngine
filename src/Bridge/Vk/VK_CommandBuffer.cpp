@@ -127,6 +127,14 @@ void VK_CommandBuffer::drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uin
     m_cmd.drawIndexedIndirect(vkBuffer->getHandle(), offset, drawCount, stride);
 }
 
+void VK_CommandBuffer::drawIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) {
+    auto* vkBuffer = static_cast<VK_Buffer*>(buffer);
+    m_cmd.drawIndirect(vkBuffer->getHandle(), offset, drawCount, stride);
+}
+
+void VK_CommandBuffer::drawMeshTasksIndirectEXT(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) {
+}
+
 void VK_CommandBuffer::copyTextureToBuffer(ITexture* texture, IBuffer* buffer) {
     auto* vkT = static_cast<VK_Texture*>(texture);
     auto* vkB = static_cast<VK_Buffer*>(buffer);

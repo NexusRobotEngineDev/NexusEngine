@@ -24,6 +24,8 @@ public:
     void bindIndexBuffer(IBuffer* buffer, uint64_t offset, IndexType indexType) override;
     void bindDescriptorSets(PipelineBindPoint bindPoint, void* layout, uint32_t firstSet, void* descriptorSet) override;
     void drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;
+    void drawIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;
+    void drawMeshTasksIndirectEXT(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;
     void copyTextureToBuffer(ITexture* texture, IBuffer* buffer) override;
 
     vk::CommandBuffer getHandle() const { return m_cmd; }

@@ -116,4 +116,23 @@ struct DrawIndexedIndirectCommand {
     uint32_t firstInstance;
 };
 
+/**
+ * @brief 非索引间接绘制指令
+ */
+struct DrawIndirectCommand {
+    uint32_t vertexCount;
+    uint32_t instanceCount;
+    uint32_t firstVertex;
+    uint32_t firstInstance;
+};
+
+/**
+ * @brief Mesh Shader 间接绘制指令
+ */
+struct DrawMeshTasksIndirectCommand {
+    uint32_t groupCountX;
+    uint32_t groupCountY;
+    uint32_t groupCountZ;
+};
+
 } // namespace Nexus

@@ -8,6 +8,7 @@
 #include "Interfaces.h"
 #include <vector>
 #include "VK_CommandBuffer.h"
+#include "VK_IndirectBuffer.h"
 
 namespace Nexus {
 
@@ -82,6 +83,7 @@ private:
     std::vector<std::unique_ptr<VK_Texture>> m_swapchainTextures;
     Status createSwapchainTextures();
     std::unique_ptr<VK_Texture> m_testTexture;
+    std::unique_ptr<VK_IndirectBuffer> m_indirectBuffer;
 
     struct BindlessConstants {
         uint32_t textureIndex;

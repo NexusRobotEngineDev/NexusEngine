@@ -75,6 +75,16 @@ Status VK_Renderer::initialize() {
     m_testTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
+    m_indirectBuffer = std::make_unique<VK_IndirectBuffer>(m_context);
+    DrawIndirectCommand drawCmd;
+    drawCmd.vertexCount = 3;
+    drawCmd.instanceCount = 1;
+    drawCmd.firstVertex = 0;
+    drawCmd.firstInstance = 0;
+
+    std::vector<DrawIndirectCommand> commands = { drawCmd };
+    NX_RETURN_IF_ERROR(m_indirectBuffer->uploadDrawCommands(commands));
+
     return OkStatus();
 }
 
@@ -334,7 +344,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     scissor.extent = extent;
     commandBuffer.setScissor(0, 1, &scissor);
 
-    commandBuffer.draw(3, 1, 0, 0);
+    commandBuffer.drawIndirect(m_indirectBuffer->getHandle(), 0, 1, sizeof(DrawIndirectCommand));
 
     commandBuffer.endRendering();
 
