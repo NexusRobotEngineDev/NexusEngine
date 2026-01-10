@@ -23,6 +23,7 @@ public:
     void bindVertexBuffers(uint32_t firstBinding, IBuffer* buffer, uint64_t offset) override;
     void bindIndexBuffer(IBuffer* buffer, uint64_t offset, IndexType indexType) override;
     void bindDescriptorSets(PipelineBindPoint bindPoint, void* layout, uint32_t firstSet, void* descriptorSet) override;
+    void drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) override;
     void drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;
     void drawIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;
     void drawMeshTasksIndirectEXT(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) override;

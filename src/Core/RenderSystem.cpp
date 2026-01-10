@@ -44,6 +44,10 @@ Status RenderSystem::renderFrame() {
     return m_bridgeRenderer->renderFrame();
 }
 
+void RenderSystem::processEvent(const void* event) {
+    m_bridgeRenderer->processEvent(event);
+}
+
 /**
  * @brief 处理窗口大小改变
  */

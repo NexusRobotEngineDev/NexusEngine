@@ -79,6 +79,7 @@ if(ENABLE_SDL)
 endif()
 
 if(ENABLE_RMLUI)
+    target_compile_definitions(BridgeImpl PUBLIC ENABLE_RMLUI)
     target_link_libraries(BridgeImpl PUBLIC RmlUi::RmlUi)
 endif()
 

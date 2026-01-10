@@ -33,6 +33,11 @@ public:
     Status renderFrame() override;
 
     /**
+     * @brief 处理系统事件
+     */
+    void processEvent(const void* event) override;
+
+    /**
      * @brief 处理窗口改变大小
      */
     Status onResize(uint32_t width, uint32_t height) override;

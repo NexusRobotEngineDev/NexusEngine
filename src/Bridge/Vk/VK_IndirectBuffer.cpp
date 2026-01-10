@@ -10,7 +10,7 @@ Status VK_IndirectBuffer::uploadDrawCommands(const std::span<const DrawIndirectC
         if (getHandle() != nullptr) {
             destroy();
         }
-        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal));
+        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
     return uploadData(commands.data(), size);
 }
@@ -21,7 +21,7 @@ Status VK_IndirectBuffer::uploadDrawIndexedCommands(const std::span<const DrawIn
         if (getHandle() != nullptr) {
             destroy();
         }
-        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal));
+        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
     return uploadData(commands.data(), size);
 }
@@ -32,7 +32,7 @@ Status VK_IndirectBuffer::uploadDrawMeshTasksCommands(const std::span<const Draw
         if (getHandle() != nullptr) {
             destroy();
         }
-        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal));
+        NX_RETURN_IF_ERROR(create(size, vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     }
     return uploadData(commands.data(), size);
 }

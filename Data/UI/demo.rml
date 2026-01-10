@@ -1,0 +1,27 @@
+<rml>
+<head>
+    <title>Demo</title>
+    <style>
+        body {
+            font-family: Arial;
+            font-size: 18px;
+            color: white;
+            padding: 20px;
+            margin: auto;
+            width: 400px;
+            height: 300px;
+            background-color: #333333cc;
+        }
+        div.box {
+            width: 100px;
+            height: 100px;
+            background-color: #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>Nexus Engine UI Test</h1>
+    <p>This is rendered via Vulkan & RmlUi!</p>
+    <div class="box"></div>
+</body>
+</rml>

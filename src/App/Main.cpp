@@ -72,6 +72,14 @@ Status InitializeEngine() {
         g_physicsThread->startThread();
     }
 
+    g_window->setEventCallback([](const void* event) {
+#if ENABLE_VULKAN
+        if (g_renderer) {
+            g_renderer->processEvent(event);
+        }
+#endif
+    });
+
     return OkStatus();
 }
 

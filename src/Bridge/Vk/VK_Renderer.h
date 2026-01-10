@@ -9,6 +9,7 @@
 #include <vector>
 #include "VK_CommandBuffer.h"
 #include "VK_IndirectBuffer.h"
+#include "VK_UIBridge.h"
 
 namespace Nexus {
 
@@ -29,6 +30,11 @@ public:
      * @brief 执行渲染一帧 (Legacy)
      */
     Status renderFrame() override;
+
+    /**
+     * @brief 处理系统事件
+     */
+    void processEvent(const void* event) override;
 
     /**
      * @brief 开始帧记录
@@ -84,6 +90,10 @@ private:
     Status createSwapchainTextures();
     std::unique_ptr<VK_Texture> m_testTexture;
     std::unique_ptr<VK_IndirectBuffer> m_indirectBuffer;
+
+#ifdef ENABLE_RMLUI
+    std::unique_ptr<VK_UIBridge> m_uiBridge;
+#endif
 
     struct BindlessConstants {
         uint32_t textureIndex;

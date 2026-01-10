@@ -122,6 +122,10 @@ void VK_CommandBuffer::bindDescriptorSets(PipelineBindPoint bindPoint, void* lay
     m_cmd.bindDescriptorSets(vkBindPoint, static_cast<VkPipelineLayout>(layout), firstSet, 1, (vk::DescriptorSet*)&descriptorSet, 0, nullptr);
 }
 
+void VK_CommandBuffer::drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance) {
+    m_cmd.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
 void VK_CommandBuffer::drawIndexedIndirect(IBuffer* buffer, uint64_t offset, uint32_t drawCount, uint32_t stride) {
     auto* vkBuffer = static_cast<VK_Buffer*>(buffer);
     m_cmd.drawIndexedIndirect(vkBuffer->getHandle(), offset, drawCount, stride);

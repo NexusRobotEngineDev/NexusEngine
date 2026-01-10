@@ -81,6 +81,10 @@ void SDL_Window_Wrapper::onEvent(const void* eventPtr) {
         m_width = event->window.data1;
         m_height = event->window.data2;
     }
+
+    if (m_eventCallback) {
+        m_eventCallback(eventPtr);
+    }
 }
 
 void SDL_Window_Wrapper::shutdown() {

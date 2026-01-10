@@ -2,6 +2,7 @@
 #include "../Interfaces.h"
 #include <SDL3/SDL.h>
 #include <string>
+#include <functional>
 
 namespace Nexus {
 
@@ -51,11 +52,16 @@ public:
      */
     virtual bool shouldClose() const override;
 
+    virtual void setEventCallback(std::function<void(const void*)> callback) override {
+        m_eventCallback = callback;
+    }
+
 private:
     SDL_Window* m_window = nullptr;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
     bool m_shouldClose = false;
+    std::function<void(const void*)> m_eventCallback;
 };
 
 } // namespace Nexus

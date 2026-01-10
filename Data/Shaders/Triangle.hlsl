@@ -14,12 +14,12 @@ struct BindlessConstants {
 };
 
 [[vk::push_constant]]
-BindlessConstants constants;
+ConstantBuffer<BindlessConstants> constants;
 
-[[vk::set(0)]] [[vk::binding(0)]]
+[[vk::binding(0, 0)]]
 SamplerState samplers[];
 
-[[vk::set(0)]] [[vk::binding(1)]]
+[[vk::binding(1, 0)]]
 Texture2D textures[];
 
 PSInput VSMain(VSInput input) {
