@@ -1,0 +1,76 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ "master", "dev", "feat/*" ]
+  pull_request:
+    branches: [ "master", "dev", "feat/*" ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup VCPKG
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        .\vcpkg\bootstrap-vcpkg.bat
+        echo "VCPKG_ROOT=$PWD\vcpkg" >> $env:GITHUB_ENV
+
+    - name: Configure CMake
+      run: cmake -B build -S NexusEngine -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Run Tests
+      working-directory: build/tests
+      run: |
+        .\Release\NexusTests.exe
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      LANG: zh_CN.UTF-8
+      LANGUAGE: zh_CN:zh
+      LC_ALL: zh_CN.UTF-8
+    steps:
+    - name: Install System Dependencies
+      run: |
+        apt-get update
+        apt-get install -y software-properties-common gnupg ca-certificates locales
+        add-apt-repository ppa:ubuntu-toolchain-r/test -y
+        apt-get update
+        apt-get install -y \
+          git cmake ninja-build gcc-13 g++-13 \
+          make curl zip unzip tar pkg-config perl \
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libxext-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+          libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+          mesa-vulkan-drivers libvulkan-dev \
+          libasound2-dev libpulse-dev libdbus-1-dev libudev-dev
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
+        locale-gen zh_CN.UTF-8
+
+    - uses: actions/checkout@v4
+
+    - name: Setup VCPKG
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+        echo "VCPKG_ROOT=$PWD/vcpkg" >> $GITHUB_ENV
+
+    - name: Configure CMake
+      run: cmake -B build -S NexusEngine -GNinja -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Run Tests
+      working-directory: build/tests
+      run: |
+        ./NexusTests
