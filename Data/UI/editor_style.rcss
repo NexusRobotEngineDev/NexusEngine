@@ -1,0 +1,106 @@
+body {
+    font-family: Arial;
+    font-size: 14dp;
+    color: #e0e0e0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* 主布局容器 */
+.editor-root {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+}
+
+/* 侧边栏Dock区域 */
+.dock-zone {
+    min-width: 200dp;
+    max-width: 400dp;
+    background-color: #1e1e2ecc;
+    border: 1dp #3a3a5a;
+    overflow: auto;
+}
+
+.dock-zone.left {
+    width: 260dp;
+    border-right: 2dp #4a4a6a;
+}
+
+.dock-zone.right {
+    width: 260dp;
+    border-left: 2dp #4a4a6a;
+}
+
+/* 中心视口区域 */
+.viewport-area {
+    flex: 1;
+    background-color: #00000000;
+}
+
+/* 底部停靠栏 */
+.dock-zone.bottom {
+    width: 100%;
+    height: 180dp;
+    border-top: 2dp #4a4a6a;
+}
+
+/* 可拖拽面板 */
+.panel {
+    background-color: #252538ee;
+    border: 1dp #505080;
+    margin: 4dp;
+    padding: 0;
+    overflow: auto;
+}
+
+.panel .title-bar {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #363658;
+    padding: 6dp 10dp;
+    cursor: move;
+    drag: drag;
+}
+
+.panel .title-bar .title-text {
+    font-size: 13dp;
+    font-weight: bold;
+    color: #c0c0ff;
+}
+
+.panel .panel-content {
+    padding: 8dp;
+}
+
+/* 浮动窗口 (被拖拽时的状态) */
+.panel.floating {
+    position: absolute;
+    z-index: 100;
+    box-shadow: #00000088 4dp 4dp 12dp;
+    border: 1dp #8080ff;
+}
+
+/* Dock 区域高亮 (拖拽悬停时) */
+.dock-zone.highlight {
+    background-color: #2a2a5acc;
+    border: 2dp #8080ff;
+}
+
+/* 通用按钮 */
+button {
+    background-color: #3a3a5a;
+    color: #d0d0ff;
+    border: 1dp #505080;
+    padding: 4dp 12dp;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #4a4a7a;
+}

@@ -1,0 +1,37 @@
+<rml>
+<head>
+    <title>Nexus Editor</title>
+    <link type="text/rcss" href="editor_style.rcss" />
+</head>
+<body>
+    <div class="editor-root">
+        <!-- 左侧 Dock 区域 -->
+        <div id="dock-left" class="dock-zone left">
+            <div id="panel-hierarchy" class="panel">
+                <div class="title-bar" drag="drag">
+                    <span class="title-text">场景层级</span>
+                </div>
+                <div class="panel-content">
+                    <p>Scene Hierarchy</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中心视口 -->
+        <div id="viewport" class="viewport-area">
+        </div>
+
+        <!-- 右侧 Dock 区域 -->
+        <div id="dock-right" class="dock-zone right">
+            <div id="panel-properties" class="panel">
+                <div class="title-bar" drag="drag">
+                    <span class="title-text">属性面板</span>
+                </div>
+                <div class="panel-content">
+                    <p>Properties</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</rml>

@@ -2,6 +2,8 @@
 #include "VK_ShaderCompiler.h"
 #include "ResourceLoader.h"
 #include "Log.h"
+#include "VK_UIBridge.h"
+#include "../../Editor/EditorUIManager.h"
 
 namespace Nexus {
 
@@ -88,8 +90,8 @@ Status VK_Renderer::initialize() {
 #ifdef ENABLE_RMLUI
     m_uiBridge = std::make_unique<VK_UIBridge>(m_context, this);
     if (m_uiBridge->initialize(m_swapchain->getExtent().width, m_swapchain->getExtent().height)) {
-        std::string docPath = ResourceLoader::getBasePath() + "Data/UI/demo.rml";
-        m_uiBridge->loadDocument(docPath);
+        m_editorUIManager = std::make_unique<EditorUIManager>();
+        m_editorUIManager->initialize(m_uiBridge.get());
     }
 #endif
 

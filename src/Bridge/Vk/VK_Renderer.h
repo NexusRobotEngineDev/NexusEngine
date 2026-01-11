@@ -10,6 +10,7 @@
 #include "VK_CommandBuffer.h"
 #include "VK_IndirectBuffer.h"
 #include "VK_UIBridge.h"
+#include "../../Editor/EditorUIManager.h"
 
 namespace Nexus {
 
@@ -93,6 +94,7 @@ private:
 
 #ifdef ENABLE_RMLUI
     std::unique_ptr<VK_UIBridge> m_uiBridge;
+    std::unique_ptr<EditorUIManager> m_editorUIManager;
 #endif
 
     struct BindlessConstants {

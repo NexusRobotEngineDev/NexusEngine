@@ -11,6 +11,9 @@ add_library(Core STATIC
     GlobalSceneTable.cpp
     StreamingManager.h
     StreamingManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Editor/Panel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Editor/EditorUIManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Editor/EditorUIManager.cpp
 )
 
 target_link_libraries(Core PUBLIC BridgeImpl Bridge)
