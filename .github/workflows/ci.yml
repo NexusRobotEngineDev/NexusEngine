@@ -19,7 +19,7 @@ jobs:
         echo "VCPKG_ROOT=$PWD\vcpkg" >> $env:GITHUB_ENV
 
     - name: Configure CMake
-      run: cmake -B build -S NexusEngine -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
       run: cmake --build build --config Release
@@ -65,7 +65,7 @@ jobs:
         echo "VCPKG_ROOT=$PWD/vcpkg" >> $GITHUB_ENV
 
     - name: Configure CMake
-      run: cmake -B build -S NexusEngine -GNinja -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -S . -GNinja -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
       run: cmake --build build
