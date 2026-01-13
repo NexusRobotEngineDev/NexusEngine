@@ -12,22 +12,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup VCPKG
-      run: |
-        git clone https://github.com/microsoft/vcpkg.git
-        .\vcpkg\bootstrap-vcpkg.bat
-        echo "VCPKG_ROOT=$PWD\vcpkg" >> $env:GITHUB_ENV
+    - name: Restore artifacts, or setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: ${{ github.workspace }}/vcpkg
+        vcpkgJsonGlob: 'vcpkg.json'
+        vcpkgConfigurationJsonGlob: 'vcpkg-configuration.json'
 
     - name: Configure CMake
-      run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+      run: cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
     - name: Build
       run: cmake --build build --config Release
 
-    - name: Run Tests
-      working-directory: build/tests
-      run: |
-        .\Release\NexusTests.exe
+    - name: Test
+      run: ctest --test-dir build -C Release --output-on-failure
 
   build-linux-x64:
     runs-on: ubuntu-latest
@@ -42,11 +41,11 @@ jobs:
     - name: Install System Dependencies
       run: |
         apt-get update
-        apt-get install -y software-properties-common gnupg ca-certificates locales
+        apt-get install -y software-properties-common gnupg ca-certificates locales wget
         add-apt-repository ppa:ubuntu-toolchain-r/test -y
         apt-get update
         apt-get install -y \
-          git cmake ninja-build gcc-13 g++-13 \
+          git gcc-13 g++-13 ninja-build \
           make curl zip unzip tar pkg-config perl \
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
           libxext-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
@@ -55,6 +54,14 @@ jobs:
           libasound2-dev libpulse-dev libdbus-1-dev libudev-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
         locale-gen zh_CN.UTF-8
+
+    - name: Install CMake 3.30
+      run: |
+        wget -q https://github.com/Kitware/CMake/releases/download/v3.30.0/cmake-3.30.0-linux-x86_64.tar.gz
+        tar xzf cmake-3.30.0-linux-x86_64.tar.gz -C /opt
+        ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/cmake /usr/local/bin/cmake
+        ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/ctest /usr/local/bin/ctest
+        cmake --version
 
     - uses: actions/checkout@v4
 
@@ -65,12 +72,10 @@ jobs:
         echo "VCPKG_ROOT=$PWD/vcpkg" >> $GITHUB_ENV
 
     - name: Configure CMake
-      run: cmake -B build -S . -GNinja -DCMAKE_BUILD_TYPE=Release
+      run: cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-linux-static
 
     - name: Build
       run: cmake --build build
 
-    - name: Run Tests
-      working-directory: build/tests
-      run: |
-        ./NexusTests
+    - name: Test
+      run: ctest --test-dir build --output-on-failure
