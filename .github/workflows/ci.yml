@@ -47,6 +47,7 @@ jobs:
         apt-get install -y \
           git gcc-13 g++-13 ninja-build \
           make curl zip unzip tar pkg-config perl \
+          autoconf automake libtool \
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
           libxext-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
           libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
