@@ -56,7 +56,7 @@ jobs:
           mesa-vulkan-drivers libvulkan-dev \
           libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
           libmount-dev libcap-dev libglu1-mesa-dev xorg-dev \
-          libsystemd-dev
+          libsystemd-dev libcryptsetup-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 100
         locale-gen zh_CN.UTF-8
