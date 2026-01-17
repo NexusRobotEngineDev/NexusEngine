@@ -51,7 +51,7 @@ StatusOr<vk::DescriptorSetLayout> VK_DescriptorManager::createLayout(const std::
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    std::vector<vk::DescriptorBindingFlags> bindingFlags(bindings.size(), {});
+    std::vector<vk::DescriptorBindingFlags> bindingFlags(bindings.size(), vk::DescriptorBindingFlags());
     vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo;
 
     if (isBindless) {
