@@ -29,8 +29,8 @@ public:
      */
     virtual void* getNativeHandle() const override;
 
-    uint32_t getWidth() const { return m_width; }
-    uint32_t getHeight() const { return m_height; }
+    uint32_t getWidth() const;
+    uint32_t getHeight() const;
 
     /**
      * @brief 处理单个 SDL 事件

@@ -63,6 +63,24 @@ void* SDL_Window_Wrapper::getNativeHandle() const {
     return m_window;
 }
 
+uint32_t SDL_Window_Wrapper::getWidth() const {
+    if (m_window) {
+        int w, h;
+        SDL_GetWindowSizeInPixels(m_window, &w, &h);
+        return static_cast<uint32_t>(w);
+    }
+    return m_width;
+}
+
+uint32_t SDL_Window_Wrapper::getHeight() const {
+    if (m_window) {
+        int w, h;
+        SDL_GetWindowSizeInPixels(m_window, &w, &h);
+        return static_cast<uint32_t>(h);
+    }
+    return m_height;
+}
+
 uint32_t SDL_Window_Wrapper::getWindowID() const {
     return m_window ? SDL_GetWindowID(m_window) : 0;
 }
