@@ -38,7 +38,7 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     vk::MemoryRequirements memRequirements = device.getImageMemoryRequirements(m_image);
     vk::MemoryAllocateInfo allocInfo(memRequirements.size, m_context->findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal));
     m_memory = device.allocateMemory(allocInfo).value;
-    device.bindImageMemory(m_image, m_memory, 0);
+    (void)device.bindImageMemory(m_image, m_memory, 0);
 
     vk::BufferCreateInfo stagingBufferInfo({}, imageData.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc);
     vk::Buffer stagingBuffer = device.createBuffer(stagingBufferInfo).value;
@@ -46,7 +46,7 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     vk::MemoryRequirements stagingMemReq = device.getBufferMemoryRequirements(stagingBuffer);
     vk::MemoryAllocateInfo stagingAllocInfo(stagingMemReq.size, m_context->findMemoryType(stagingMemReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
     vk::DeviceMemory stagingMemory = device.allocateMemory(stagingAllocInfo).value;
-    device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
+    (void)device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
 
     void* data = device.mapMemory(stagingMemory, 0, imageData.pixels.size()).value;
     memcpy(data, imageData.pixels.data(), imageData.pixels.size());
@@ -86,7 +86,7 @@ Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format,
     m_image = device.createImage(imageInfo).value;
     vk::MemoryRequirements memReq = device.getImageMemoryRequirements(m_image);
     m_memory = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)}).value;
-    device.bindImageMemory(m_image, m_memory, 0);
+    (void)device.bindImageMemory(m_image, m_memory, 0);
     vk::ImageViewCreateInfo viewInfo({}, m_image, vk::ImageViewType::e2D, vkFormat, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
     m_view = device.createImageView(viewInfo).value;
     if (m_context->getBindlessManager()) m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);

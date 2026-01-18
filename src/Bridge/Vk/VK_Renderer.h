@@ -10,7 +10,6 @@
 #include "VK_CommandBuffer.h"
 #include "VK_IndirectBuffer.h"
 #include "VK_UIBridge.h"
-#include "../../Editor/EditorUIManager.h"
 
 namespace Nexus {
 
@@ -55,6 +54,9 @@ public:
      * @brief 处理窗口改变大小
      */
     Status onResize(uint32_t width, uint32_t height);
+    void updateWindowSize(int width, int height);
+
+    VK_UIBridge* getUIBridge() { return m_uiBridge.get(); }
 
     /**
      * @brief 等待设备空闲
@@ -94,7 +96,6 @@ private:
 
 #ifdef ENABLE_RMLUI
     std::unique_ptr<VK_UIBridge> m_uiBridge;
-    std::unique_ptr<EditorUIManager> m_editorUIManager;
 #endif
 
     struct BindlessConstants {

@@ -3,7 +3,6 @@
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
-#include "../../Editor/EditorUIManager.h"
 
 namespace Nexus {
 
@@ -89,10 +88,7 @@ Status VK_Renderer::initialize() {
 
 #ifdef ENABLE_RMLUI
     m_uiBridge = std::make_unique<VK_UIBridge>(m_context, this);
-    if (m_uiBridge->initialize(m_swapchain->getExtent().width, m_swapchain->getExtent().height)) {
-        m_editorUIManager = std::make_unique<EditorUIManager>();
-        m_editorUIManager->initialize(m_uiBridge.get());
-    }
+    m_uiBridge->initialize(m_swapchain->getExtent().width, m_swapchain->getExtent().height);
 #endif
 
     return OkStatus();
@@ -376,9 +372,19 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) return OkStatus();
+    NX_CORE_INFO("VK_Renderer: Window resized to {}x{}", width, height);
+
     deviceWaitIdle();
     NX_RETURN_IF_ERROR(m_swapchain->recreate(width, height));
+
+    if (m_uiBridge) {
+        m_uiBridge->onResize(width, height);
+    }
     return OkStatus();
+}
+
+void VK_Renderer::updateWindowSize(int width, int height) {
+    (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
 Status VK_Renderer::renderFrame() {
 #ifdef ENABLE_RMLUI

@@ -51,6 +51,8 @@ public:
     uint32_t acquireNextImage() override;
     void present(uint32_t imageIndex) override;
 
+    VK_Renderer* getBridgeRenderer() { return m_bridgeRenderer.get(); }
+
 private:
     VK_Context* m_context;
     VK_Swapchain* m_swapchain;

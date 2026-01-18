@@ -10,6 +10,8 @@
 #include "Vk/VK_Context.h"
 #include "Vk/VK_Swapchain.h"
 #include "RenderSystem.h"
+#include "Editor/EditorUIManager.h"
+#include "Vk/VK_Renderer.h"
 #endif
 
 using namespace Nexus;
@@ -27,6 +29,7 @@ std::atomic<bool> g_quit{false};
 #if ENABLE_VULKAN
 std::unique_ptr<VK_Swapchain> g_swapchain;
 std::unique_ptr<Core::RenderSystem> g_renderer;
+std::unique_ptr<EditorUIManager> g_editorUIManager;
 #endif
 
 struct Position { float x, y; };
@@ -59,6 +62,9 @@ Status InitializeEngine() {
     g_rhiThread = std::make_unique<RHIThread>(vkContext);
     g_rhiThread->setRenderer(g_renderer.get());
     g_rhiThread->startThread();
+
+    g_editorUIManager = std::make_unique<EditorUIManager>();
+    g_editorUIManager->initialize(g_renderer->getBridgeRenderer()->getUIBridge());
 #endif
 
     g_physicsSystem = new PhysicsSystem();
@@ -95,6 +101,7 @@ void ShutdownEngine() {
     }
 
 #if ENABLE_VULKAN
+    g_editorUIManager.reset();
     g_renderer.reset();
     g_swapchain.reset();
 #endif
