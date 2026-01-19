@@ -96,6 +96,7 @@ private:
 
 #ifdef ENABLE_RMLUI
     std::unique_ptr<VK_UIBridge> m_uiBridge;
+    SPSCQueue<SDL_Event, 256> m_eventQueue;
 #endif
 
     struct BindlessConstants {
