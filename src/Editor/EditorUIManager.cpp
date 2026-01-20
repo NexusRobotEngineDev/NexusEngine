@@ -2,6 +2,8 @@
 #include "../Bridge/Vk/VK_UIBridge.h"
 #include "../Bridge/Log.h"
 #include "../Bridge/ResourceLoader.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
 
 #ifdef ENABLE_RMLUI
 
@@ -171,13 +173,81 @@ Rml::Element* EditorUIManager::findDockZoneAtPosition(float x, float y) {
 }
 
 bool EditorUIManager::saveLayout(const std::string& filePath) {
-    NX_CORE_INFO("EditorUIManager: 布局保存 (未实现): {}", filePath);
+    std::string fullPath = ResourceLoader::getBasePath() + filePath;
+
+    nlohmann::json j;
+    nlohmann::json panelsArray = nlohmann::json::array();
+
+    for (auto& p : m_panels) {
+        nlohmann::json panelObj;
+        panelObj["id"] = p->getId();
+        panelObj["docked"] = p->isDocked();
+        panelObj["dockZone"] = p->getDockZone();
+        panelObj["floatX"] = p->getFloatX();
+        panelObj["floatY"] = p->getFloatY();
+        panelsArray.push_back(panelObj);
+    }
+    j["panels"] = panelsArray;
+
+    std::ofstream file(fullPath);
+    if (!file.is_open()) {
+        NX_CORE_ERROR("EditorUIManager: 无法写入布局文件: {}", fullPath);
+        return false;
+    }
+    file << j.dump(2);
+    file.close();
+
+    NX_CORE_INFO("EditorUIManager: 布局已保存: {}", fullPath);
     return true;
 }
 
 bool EditorUIManager::loadLayout(const std::string& filePath) {
-    NX_CORE_INFO("EditorUIManager: 布局加载 (未实现): {}", filePath);
-    return true;
+    std::string fullPath = ResourceLoader::getBasePath() + filePath;
+
+    std::ifstream file(fullPath);
+    if (!file.is_open()) {
+        NX_CORE_INFO("EditorUIManager: 布局文件不存在, 使用默认布局: {}", fullPath);
+        return false;
+    }
+
+    try {
+        nlohmann::json j = nlohmann::json::parse(file);
+        file.close();
+
+        if (!j.contains("panels") || !j["panels"].is_array()) {
+            NX_CORE_WARN("EditorUIManager: 布局文件格式无效");
+            return false;
+        }
+
+        for (auto& panelObj : j["panels"]) {
+            std::string id = panelObj.value("id", "");
+            bool docked = panelObj.value("docked", true);
+            std::string dockZone = panelObj.value("dockZone", "");
+            float floatX = panelObj.value("floatX", 0.0f);
+            float floatY = panelObj.value("floatY", 0.0f);
+
+            if (id.empty()) continue;
+
+            if (docked && !dockZone.empty()) {
+                dockPanel(id, dockZone);
+            } else {
+                floatPanel(id, floatX, floatY);
+            }
+
+            for (auto& p : m_panels) {
+                if (p->getId() == id) {
+                    p->setFloatPosition(floatX, floatY);
+                    break;
+                }
+            }
+        }
+
+        NX_CORE_INFO("EditorUIManager: 布局已恢复: {}", fullPath);
+        return true;
+    } catch (const std::exception& e) {
+        NX_CORE_ERROR("EditorUIManager: 布局文件解析失败: {}", e.what());
+        return false;
+    }
 }
 
 } // namespace Nexus

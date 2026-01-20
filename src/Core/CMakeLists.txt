@@ -7,7 +7,8 @@ file(GLOB CORE_SOURCES
 
 add_library(Core STATIC ${CORE_SOURCES})
 
-target_link_libraries(Core PUBLIC BridgeImpl Bridge)
+find_package(nlohmann_json CONFIG REQUIRED)
+target_link_libraries(Core PUBLIC BridgeImpl Bridge nlohmann_json::nlohmann_json)
 
 target_include_directories(Core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"

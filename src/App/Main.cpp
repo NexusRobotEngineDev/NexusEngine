@@ -14,7 +14,12 @@
 #include "Vk/VK_Renderer.h"
 #endif
 
+#include "Core/Scene.h"
+#include "Core/HierarchySystem.h"
+#include "Core/SceneSerializer.h"
+
 using namespace Nexus;
+using namespace Nexus::Core;
 
 namespace {
 WindowPtr g_window = nullptr;
@@ -31,6 +36,8 @@ std::unique_ptr<VK_Swapchain> g_swapchain;
 std::unique_ptr<Core::RenderSystem> g_renderer;
 std::unique_ptr<EditorUIManager> g_editorUIManager;
 #endif
+
+std::unique_ptr<Scene> g_scene;
 
 struct Position { float x, y; };
 
@@ -65,7 +72,16 @@ Status InitializeEngine() {
 
     g_editorUIManager = std::make_unique<EditorUIManager>();
     g_editorUIManager->initialize(g_renderer->getBridgeRenderer()->getUIBridge());
+    g_editorUIManager->loadLayout("Data/UI/editor_layout.json");
 #endif
+
+    g_scene = std::make_unique<Scene>("MainScene");
+    SceneSerializer deserializer(*g_scene);
+    if (!deserializer.deserialize("Data/main_scene.bin")) {
+        NX_CORE_INFO("No existing scene found, creating default entity.");
+        Entity e = g_scene->createEntity("DefaultBox");
+        e.getComponent<TransformComponent>().position = {0.0f, 1.0f, 0.0f};
+    }
 
     g_physicsSystem = new PhysicsSystem();
     auto physicsStatus = g_physicsSystem->initialize();
@@ -101,6 +117,14 @@ void ShutdownEngine() {
     }
 
 #if ENABLE_VULKAN
+    if (g_editorUIManager) {
+        g_editorUIManager->saveLayout("Data/UI/editor_layout.json");
+    }
+    if (g_scene) {
+        SceneSerializer serializer(*g_scene);
+        serializer.serialize("Data/main_scene.bin");
+        g_scene.reset();
+    }
     g_editorUIManager.reset();
     g_renderer.reset();
     g_swapchain.reset();
@@ -144,6 +168,9 @@ void RunMainLoop() {
 #if ENABLE_VULKAN
         if (g_rhiThread) {
             g_rhiThread->requestSync();
+            if (g_scene) {
+                HierarchySystem::update(g_scene->getRegistry());
+            }
             g_rhiThread->resumeSync();
 
             RenderCommand cmd;

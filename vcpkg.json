@@ -6,6 +6,7 @@
     "entt",
     "gtest",
     "mujoco",
+    "nlohmann-json",
     "rmlui",
     {
       "name": "sdl3",
