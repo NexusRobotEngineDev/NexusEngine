@@ -23,9 +23,15 @@ struct SerializedEntity {
     uint32_t parent = 0;
     std::vector<uint32_t> children;
 
+    bool hasCamera = false;
+    CameraComponent camera;
+
+    bool hasMesh = false;
+    MeshComponent mesh;
+
     template<class Archive>
     void serialize(Archive& ar) {
-        ar(id, hasTag, tag, hasTransform, transform, hasHierarchy, parent, children);
+        ar(id, hasTag, tag, hasTransform, transform, hasHierarchy, parent, children, hasCamera, camera, hasMesh, mesh);
     }
 };
 
@@ -64,6 +70,14 @@ bool SceneSerializer::serialize(const std::string& filePath) {
                 for (auto child : hier.children) {
                     se.children.push_back(static_cast<uint32_t>(child));
                 }
+            }
+            if (reg.all_of<CameraComponent>(entityHandle)) {
+                se.hasCamera = true;
+                se.camera = reg.get<CameraComponent>(entityHandle);
+            }
+            if (reg.all_of<MeshComponent>(entityHandle)) {
+                se.hasMesh = true;
+                se.mesh = reg.get<MeshComponent>(entityHandle);
             }
             entities.push_back(se);
         }
@@ -116,6 +130,12 @@ bool SceneSerializer::deserialize(const std::string& filePath) {
             }
             if (se.hasTransform) {
                 reg.emplace<TransformComponent>(handle, se.transform);
+            }
+            if (se.hasCamera) {
+                reg.emplace<CameraComponent>(handle, se.camera);
+            }
+            if (se.hasMesh) {
+                reg.emplace<MeshComponent>(handle, se.mesh);
             }
         }
 

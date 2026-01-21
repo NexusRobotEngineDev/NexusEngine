@@ -43,6 +43,9 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
 
 Status VK_Context::initializeHeadless() {
     NX_CORE_INFO("Initializing Headless Context");
+    if (!m_instance) {
+        NX_RETURN_IF_ERROR(initialize());
+    }
     NX_RETURN_IF_ERROR(selectPhysicalDevice());
     NX_RETURN_IF_ERROR(createLogicalDevice());
     NX_CORE_INFO("Creating Command Pool");

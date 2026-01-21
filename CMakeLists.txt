@@ -23,8 +23,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
     add_compile_options(/utf-8)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set(CMAKE_C_SHOWINCLUDES_PREFIX "Note: including file: ")
-    set(CMAKE_CXX_SHOWINCLUDES_PREFIX "Note: including file: ")
 endif()
 
 find_package(absl CONFIG REQUIRED)

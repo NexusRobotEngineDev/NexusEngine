@@ -8,6 +8,8 @@
 
 namespace Nexus {
 
+class Registry;
+
 /**
  * @brief 渲染指令类型
  */
@@ -26,6 +28,7 @@ struct RenderCommand {
     RenderCommandType type = RenderCommandType::None;
     uint32_t width = 0;
     uint32_t height = 0;
+    Registry* registry = nullptr;
 };
 
 /**
@@ -78,7 +81,7 @@ private:
     void processCommand(const RenderCommand& cmd) {
         switch (cmd.type) {
             case RenderCommandType::Draw:
-                if (m_renderer) (void)m_renderer->renderFrame();
+                if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
                 break;
             case RenderCommandType::Resize:
                 if (m_renderer) (void)m_renderer->onResize(cmd.width, cmd.height);

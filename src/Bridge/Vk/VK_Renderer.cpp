@@ -133,7 +133,28 @@ Status VK_Renderer::createGraphicsPipeline() {
 
     vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+    vk::VertexInputBindingDescription bindingDescription;
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(float) * 5;
+    bindingDescription.inputRate = vk::VertexInputRate::eVertex;
+
+    std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions;
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
+    attributeDescriptions[0].offset = 0;
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = vk::Format::eR32G32Sfloat;
+    attributeDescriptions[1].offset = sizeof(float) * 3;
+
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
     vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
     inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
@@ -278,7 +299,7 @@ Status VK_Renderer::createSyncObjects() {
     return OkStatus();
 }
 
-void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex) {
+void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, Registry* registry) {
     vk::CommandBufferBeginInfo beginInfo;
 
     if (commandBuffer.begin(&beginInfo) != vk::Result::eSuccess) {
@@ -350,7 +371,62 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     scissor.extent = extent;
     commandBuffer.setScissor(0, 1, &scissor);
 
-    commandBuffer.drawIndirect(m_indirectBuffer->getHandle(), 0, 1, sizeof(DrawIndirectCommand));
+    if (registry) {
+        std::array<float, 16> viewProj = {
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,0,1
+        };
+
+        auto cameraView = registry->view<CameraComponent, TransformComponent>();
+        for (auto entity : cameraView) {
+            auto& camera = cameraView.get<CameraComponent>(entity);
+            auto& transform = cameraView.get<TransformComponent>(entity);
+
+            camera.aspect = (float)extent.width / (float)extent.height;
+
+            auto proj = camera.computeProjectionMatrix();
+            std::array<float, 16> view = {
+                1,0,0,0,
+                0,1,0,0,
+                0,0,1,0,
+                -transform.worldMatrix[12], -transform.worldMatrix[13], -transform.worldMatrix[14], 1
+            };
+            viewProj = multiplyMat4(view, proj);
+            break;
+        }
+
+        auto meshView = registry->view<MeshComponent, TransformComponent>();
+
+        IBuffer* vb = m_context->getGlobalVertexBuffer();
+        IBuffer* ib = m_context->getGlobalIndexBuffer();
+
+        if (vb && ib) {
+            vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(vb)->getHandle() };
+            vk::DeviceSize offsets[] = { 0 };
+            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+            commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(ib)->getHandle(), 0, vk::IndexType::eUint32);
+
+            for (auto entity : meshView) {
+                auto& mesh = meshView.get<MeshComponent>(entity);
+                auto& transform = meshView.get<TransformComponent>(entity);
+
+                std::array<float, 16> mvp = multiplyMat4(transform.worldMatrix, viewProj);
+
+                BindlessConstants constants = {};
+                if (m_testTexture) {
+                    constants.textureIndex = m_testTexture->getBindlessTextureIndex();
+                    constants.samplerIndex = m_testTexture->getBindlessSamplerIndex();
+                }
+                constants.mvp = mvp;
+                commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, constants);
+
+                commandBuffer.drawIndexed(mesh.indexCount, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+            }
+        }
+    } else {
+    }
 
 #ifdef ENABLE_RMLUI
     if (m_uiBridge) {
@@ -392,7 +468,7 @@ Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
 void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
-Status VK_Renderer::renderFrame() {
+Status VK_Renderer::renderFrame(Registry* registry) {
 #ifdef ENABLE_RMLUI
     if (m_uiBridge) {
         SDL_Event evt;
@@ -404,7 +480,7 @@ Status VK_Renderer::renderFrame() {
 #endif
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
-    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
+    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, registry);
     endFrame(imageIndex);
     return OkStatus();
 }

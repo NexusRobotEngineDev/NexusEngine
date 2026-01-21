@@ -53,6 +53,11 @@ public:
     virtual std::unique_ptr<ITexture> createTexture(const ImageData& imageData, TextureUsage usage) override;
     virtual std::unique_ptr<ITexture> createTexture(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) override;
 
+    void setGlobalVertexBuffer(IBuffer* buffer) { m_globalVertexBuffer = buffer; }
+    void setGlobalIndexBuffer(IBuffer* buffer) { m_globalIndexBuffer = buffer; }
+    virtual IBuffer* getGlobalVertexBuffer() const override { return m_globalVertexBuffer; }
+    virtual IBuffer* getGlobalIndexBuffer() const override { return m_globalIndexBuffer; }
+
     /**
      * @brief 查找内存类型
      */
@@ -89,6 +94,9 @@ private:
     uint32_t m_graphicsQueueFamilyIndex = 0;
     vk::CommandPool m_commandPool;
     std::unique_ptr<VK_BindlessManager> m_bindlessManager;
+
+    IBuffer* m_globalVertexBuffer = nullptr;
+    IBuffer* m_globalIndexBuffer = nullptr;
 
     const std::vector<const char*> m_validationLayers = {
         "VK_LAYER_KHRONOS_validation"

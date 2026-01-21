@@ -28,11 +28,51 @@ Status RenderSystem::initialize() {
     m_commandGenerator = std::make_unique<DrawCommandGenerator>(m_context);
     NX_ASSERT(m_commandGenerator, "DrawCommandGenerator creation failed");
     NX_RETURN_IF_ERROR(m_commandGenerator->initialize(1024));
-    std::vector<float> vertices = { 0.0f, -0.5f, 0.0f, 0.5f, 0.0f, 0.5f, 0.5f, 0.0f, 1.0f, 1.0f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f };
-    std::vector<uint32_t> indices = { 0, 1, 2 };
-    uint32_t vOffset, iOffset;
-    NX_RETURN_IF_ERROR(m_meshManager->addMesh(vertices, indices, vOffset, iOffset));
-    std::vector<DrawIndexedIndirectCommand> commands = { { 3, 1, 0, 0, 0 }, { 3, 1, 0, 0, 1 }, { 3, 1, 0, 0, 2 } };
+
+    std::vector<float> vertices = {
+        -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
+         0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+        -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+         0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
+         0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
+        -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+         0.5f, -0.5f,  0.5f,  1.0f, 0.0f,
+        -0.5f, -0.5f,  0.5f,  0.0f, 0.0f,
+         0.5f, -0.5f,  0.5f,  0.0f, 1.0f,
+         0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
+         0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+         0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
+        -0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
+        -0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
+        -0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
+        -0.5f,  0.5f, -0.5f,  0.0f, 0.0f
+    };
+    std::vector<uint32_t> indices = {
+        0,  1,  2,  2,  3,  0,
+        4,  5,  6,  6,  7,  4,
+        8,  9, 10, 10, 11,  8,
+       12, 13, 14, 14, 15, 12,
+       16, 17, 18, 18, 19, 16,
+       20, 21, 22, 22, 23, 20
+    };
+
+    NX_RETURN_IF_ERROR(m_meshManager->addMesh(vertices, indices, m_cubeVertexOffset, m_cubeIndexOffset));
+
+    auto* vkContext = dynamic_cast<VK_Context*>(m_context);
+    if (vkContext) {
+        vkContext->setGlobalVertexBuffer(m_meshManager->getVertexBuffer());
+        vkContext->setGlobalIndexBuffer(m_meshManager->getIndexBuffer());
+    }
+
+    std::vector<DrawIndexedIndirectCommand> commands = { { 36, 1, m_cubeIndexOffset, static_cast<int32_t>(m_cubeVertexOffset), 0 } };
     NX_RETURN_IF_ERROR(m_commandGenerator->updateCommands(commands));
     m_bridgeRenderer = std::make_unique<VK_Renderer>(m_context, m_swapchain);
     NX_ASSERT(m_bridgeRenderer, "VK_Renderer creation failed");
@@ -40,8 +80,8 @@ Status RenderSystem::initialize() {
     return OkStatus();
 }
 
-Status RenderSystem::renderFrame() {
-    return m_bridgeRenderer->renderFrame();
+Status RenderSystem::renderFrame(Registry* registry) {
+    return m_bridgeRenderer->renderFrame(registry);
 }
 
 void RenderSystem::processEvent(const void* event) {

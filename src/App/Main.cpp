@@ -79,8 +79,30 @@ Status InitializeEngine() {
     SceneSerializer deserializer(*g_scene);
     if (!deserializer.deserialize("Data/main_scene.bin")) {
         NX_CORE_INFO("No existing scene found, creating default entity.");
-        Entity e = g_scene->createEntity("DefaultBox");
-        e.getComponent<TransformComponent>().position = {0.0f, 1.0f, 0.0f};
+        Entity camera = g_scene->createEntity("MainCamera");
+        camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, -2.0f};
+        camera.addComponent<CameraComponent>();
+
+        Entity box = g_scene->createEntity("DefaultBox");
+        box.getComponent<TransformComponent>().position = {0.0f, 0.0f, 0.0f};
+        box.addComponent<MeshComponent>();
+    } else {
+        bool hasCamera = false;
+        auto view = g_scene->getRegistry().view<CameraComponent>();
+        if (view.empty()) {
+            Entity camera = g_scene->createEntity("MainCamera");
+            camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, -2.0f};
+            camera.addComponent<CameraComponent>();
+        }
+
+        auto boxView = g_scene->getRegistry().view<TagComponent>();
+        for (auto entity : boxView) {
+            Entity e(entity, &g_scene->getRegistry());
+            if (e.getComponent<TagComponent>().name == "DefaultBox" && !e.hasComponent<MeshComponent>()) {
+                e.addComponent<MeshComponent>();
+                break;
+            }
+        }
     }
 
     g_physicsSystem = new PhysicsSystem();
@@ -175,6 +197,7 @@ void RunMainLoop() {
 
             RenderCommand cmd;
             cmd.type = RenderCommandType::Draw;
+            cmd.registry = g_scene ? &g_scene->getRegistry() : nullptr;
             g_rhiThread->pushCommand(cmd);
         }
 #else

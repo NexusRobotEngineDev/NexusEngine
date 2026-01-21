@@ -1,5 +1,6 @@
 struct VSInput {
-    uint VertexIndex : SV_VertexID;
+    float3 Pos : POSITION;
+    float2 UV : TEXCOORD0;
 };
 
 struct PSInput {
@@ -11,6 +12,9 @@ struct PSInput {
 struct BindlessConstants {
     uint textureIndex;
     uint samplerIndex;
+    uint padding0;
+    uint padding1;
+    float4x4 mvp;
 };
 
 [[vk::push_constant]]
@@ -24,20 +28,9 @@ Texture2D textures[];
 
 PSInput VSMain(VSInput input) {
     PSInput output;
-    float2 positions[3] = {
-        float2(0.0, -0.5),
-        float2(0.5, 0.5),
-        float2(-0.5, 0.5)
-    };
-    float2 uvs[3] = {
-        float2(0.5, 0.0),
-        float2(1.0, 1.0),
-        float2(0.0, 1.0)
-    };
-
-    output.Pos = float4(positions[input.VertexIndex], 0.0, 1.0);
+    output.Pos = mul(constants.mvp, float4(input.Pos, 1.0));
     output.Color = float4(1.0, 1.0, 1.0, 1.0);
-    output.UV = uvs[input.VertexIndex];
+    output.UV = input.UV;
     return output;
 }
 

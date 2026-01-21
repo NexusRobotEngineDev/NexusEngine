@@ -1,8 +1,8 @@
 #pragma once
 
-#include <array>
-#include <vector>
 #include <string>
+#include <vector>
+#include <array>
 #include <cmath>
 #include <entt/entt.hpp>
 #include <cereal/types/string.hpp>
@@ -10,6 +10,8 @@
 #include <cereal/types/array.hpp>
 
 namespace Nexus {
+
+class IBuffer;
 
 /**
  * @brief 名称标签组件
@@ -97,5 +99,46 @@ inline std::array<float, 16> multiplyMat4(const std::array<float, 16>& a, const 
     }
     return r;
 }
+
+/**
+ * @brief 相机组件 (透视/正交)
+ */
+struct CameraComponent {
+    float fov = 45.0f;
+    float aspect = 1.7777778f;
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
+
+    std::array<float, 16> computeProjectionMatrix() const {
+        float f = 1.0f / std::tan(fov * 0.5f * (3.1415926535f / 180.0f));
+        return {
+             f / aspect, 0.0f, 0.0f, 0.0f,
+             0.0f, f, 0.0f, 0.0f,
+             0.0f, 0.0f, farPlane / (nearPlane - farPlane), -1.0f,
+             0.0f, 0.0f, -(farPlane * nearPlane) / (farPlane - nearPlane), 0.0f
+        };
+    }
+
+    template<class Archive>
+    void serialize(Archive& ar) {
+        ar(fov, aspect, nearPlane, farPlane);
+    }
+};
+
+/**
+ * @brief 静态网格组件
+ */
+struct MeshComponent {
+    IBuffer* vertexBuffer = nullptr;
+    IBuffer* indexBuffer = nullptr;
+    uint32_t vertexOffset = 0;
+    uint32_t indexOffset = 0;
+    uint32_t indexCount = 0;
+
+    template<class Archive>
+    void serialize(Archive& ar) {
+        ar(vertexOffset, indexOffset, indexCount);
+    }
+};
 
 } // namespace Nexus

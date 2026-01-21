@@ -30,7 +30,7 @@ public:
     /**
      * @brief 渲染一帧
      */
-    Status renderFrame() override;
+    Status renderFrame(Registry* registry = nullptr) override;
 
     /**
      * @brief 处理系统事件
@@ -61,6 +61,9 @@ private:
     std::unique_ptr<DrawCommandGenerator> m_commandGenerator;
 
     std::unique_ptr<VK_Renderer> m_bridgeRenderer;
+
+    uint32_t m_cubeVertexOffset = 0;
+    uint32_t m_cubeIndexOffset = 0;
 };
 
 } // namespace Core
