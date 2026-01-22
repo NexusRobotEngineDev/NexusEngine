@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "PhysicsThread.h"
 #include "ResourceLoader.h"
+#include <cmath>
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -41,6 +42,60 @@ std::unique_ptr<Scene> g_scene;
 
 struct Position { float x, y; };
 
+struct InputState {
+    std::atomic<bool> w{false}, a{false}, s{false}, d{false}, q{false}, e{false};
+    std::atomic<bool> mouseRightDown{false};
+    std::atomic<float> mouseDeltaX{0.0f}, mouseDeltaY{0.0f};
+    float yaw{0.0f}, pitch{0.0f};
+} g_input;
+
+void OnWindowEvent(const void* event) {
+    const SDL_Event* sdlEvent = static_cast<const SDL_Event*>(event);
+
+    if (g_renderer) {
+        g_renderer->processEvent(event);
+    }
+
+    switch (sdlEvent->type) {
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP: {
+            bool pressed = (sdlEvent->type == SDL_EVENT_KEY_DOWN);
+            switch (sdlEvent->key.scancode) {
+                case SDL_SCANCODE_W: g_input.w = pressed; break;
+                case SDL_SCANCODE_S: g_input.s = pressed; break;
+                case SDL_SCANCODE_A: g_input.a = pressed; break;
+                case SDL_SCANCODE_D: g_input.d = pressed; break;
+                case SDL_SCANCODE_Q: g_input.q = pressed; break;
+                case SDL_SCANCODE_E: g_input.e = pressed; break;
+                default: break;
+            }
+            break;
+        }
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP: {
+            if (sdlEvent->button.button == SDL_BUTTON_RIGHT) {
+                bool isDown = (sdlEvent->type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                g_input.mouseRightDown = isDown;
+                if (g_window) {
+                    SDL_Window* sdlWin = (SDL_Window*)g_window->getNativeHandle();
+                    if (sdlWin) {
+                        SDL_SetWindowRelativeMouseMode(sdlWin, isDown);
+                    }
+                }
+            }
+            break;
+        }
+        case SDL_EVENT_MOUSE_MOTION: {
+            if (g_input.mouseRightDown) {
+                g_input.mouseDeltaX = g_input.mouseDeltaX + (float)sdlEvent->motion.xrel;
+                g_input.mouseDeltaY = g_input.mouseDeltaY + (float)sdlEvent->motion.yrel;
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
 Status InitializeEngine() {
     g_ecsRegistry = std::make_unique<Registry>();
 
@@ -49,8 +104,8 @@ Status InitializeEngine() {
 
     g_windowThread = std::make_unique<WindowThread>();
     g_windowThread->startThread();
-
     NX_RETURN_IF_ERROR(g_windowThread->createWindowAsync("Nexus Engine", 1280, 720, g_window));
+    g_window->setEventCallback(OnWindowEvent);
 
     g_context = CreateContext();
     if (!g_context) return InternalError("Context creation failed");
@@ -80,26 +135,49 @@ Status InitializeEngine() {
     if (!deserializer.deserialize("Data/main_scene.bin")) {
         NX_CORE_INFO("No existing scene found, creating default entity.");
         Entity camera = g_scene->createEntity("MainCamera");
-        camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, -2.0f};
+        camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, 2.0f};
         camera.addComponent<CameraComponent>();
 
         Entity box = g_scene->createEntity("DefaultBox");
         box.getComponent<TransformComponent>().position = {0.0f, 0.0f, 0.0f};
-        box.addComponent<MeshComponent>();
+        box.addComponent<MeshComponent>(g_renderer->getCubeMeshComponent());
     } else {
-        bool hasCamera = false;
-        auto view = g_scene->getRegistry().view<CameraComponent>();
-        if (view.empty()) {
+        bool cameraPosFixed = false;
+        auto& registry = g_scene->getRegistry();
+        auto cameraView = registry.view<CameraComponent>();
+        if (cameraView.begin() == cameraView.end()) {
             Entity camera = g_scene->createEntity("MainCamera");
-            camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, -2.0f};
+            camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, 2.0f};
             camera.addComponent<CameraComponent>();
+            cameraPosFixed = true;
+        } else {
+            for (auto entity : cameraView) {
+                if (registry.has<TransformComponent>(entity)) {
+                    auto& transform = registry.get<TransformComponent>(entity);
+                    if (transform.position[2] < 1.0f) {
+                        transform.position = {0.0f, 0.0f, 2.0f};
+                        cameraPosFixed = true;
+                    }
+                }
+                break;
+            }
+        }
+        if (cameraPosFixed) {
+            NX_CORE_INFO("Camera position forced to (0,0,2) to ensure viewport visibility.");
         }
 
-        auto boxView = g_scene->getRegistry().view<TagComponent>();
+        auto boxView = registry.view<TagComponent>();
         for (auto entity : boxView) {
-            Entity e(entity, &g_scene->getRegistry());
-            if (e.getComponent<TagComponent>().name == "DefaultBox" && !e.hasComponent<MeshComponent>()) {
-                e.addComponent<MeshComponent>();
+            Entity e(entity, &registry);
+            if (e.getComponent<TagComponent>().name == "DefaultBox") {
+                bool needsMesh = !e.hasComponent<MeshComponent>() || e.getComponent<MeshComponent>().indexCount == 0;
+                if (needsMesh) {
+                    if (e.hasComponent<MeshComponent>()) {
+                        registry.remove<MeshComponent>(entity);
+                    }
+                    e.addComponent<MeshComponent>(g_renderer->getCubeMeshComponent());
+                    NX_CORE_INFO("Restored MeshComponent for DefaultBox (indices fixed)");
+                }
                 break;
             }
         }
@@ -116,13 +194,7 @@ Status InitializeEngine() {
         g_physicsThread->startThread();
     }
 
-    g_window->setEventCallback([](const void* event) {
-#if ENABLE_VULKAN
-        if (g_renderer) {
-            g_renderer->processEvent(event);
-        }
-#endif
-    });
+
 
     return OkStatus();
 }
@@ -184,6 +256,108 @@ void RunMainLoop() {
                 cmd.width = currentWidth;
                 cmd.height = currentHeight;
                 g_rhiThread->pushCommand(cmd);
+            }
+        }
+
+        if (g_scene) {
+            auto& registry = g_scene->getRegistry();
+            auto view = registry.view<CameraComponent, TransformComponent>();
+            float speed = 0.05f;
+            float sensitivity = 0.005f;
+
+            for (auto entity : view) {
+                auto& transform = registry.get<TransformComponent>(entity);
+                auto& camera = registry.get<CameraComponent>(entity);
+
+                if (g_input.mouseRightDown) {
+                    float dx = g_input.mouseDeltaX.exchange(0.0f);
+                    float dy = g_input.mouseDeltaY.exchange(0.0f);
+
+                    g_input.yaw += dx * sensitivity;
+                    g_input.pitch += dy * sensitivity;
+
+                    const float pitchLimit = 89.0f * (3.14159265f / 180.0f);
+                    if (g_input.pitch > pitchLimit) g_input.pitch = pitchLimit;
+                    if (g_input.pitch < -pitchLimit) g_input.pitch = -pitchLimit;
+                } else {
+                    g_input.mouseDeltaX.store(0.0f);
+                    g_input.mouseDeltaY.store(0.0f);
+                }
+
+                float sf = std::sin(g_input.yaw);
+                float cf = std::cos(g_input.yaw);
+                float st = std::sin(g_input.pitch);
+                float ct = std::cos(g_input.pitch);
+
+
+                float forwardX = ct * sf;
+                float forwardY = -st;
+                float forwardZ = -ct * cf;
+
+                float fLen = std::sqrt(forwardX*forwardX + forwardY*forwardY + forwardZ*forwardZ);
+                if (fLen > 0.0001f) {
+                    forwardX /= fLen; forwardY /= fLen; forwardZ /= fLen;
+                }
+
+                float rightX = forwardY * 0.0f - forwardZ * 1.0f;
+                float rightY = forwardZ * 0.0f - forwardX * 0.0f;
+                float rightZ = forwardX * 1.0f - forwardY * 0.0f;
+
+                float rLen = std::sqrt(rightX*rightX + rightY*rightY + rightZ*rightZ);
+                if (rLen > 0.0001f) {
+                    rightX /= rLen; rightY /= rLen; rightZ /= rLen;
+                }
+
+                float upX = rightY * forwardZ - rightZ * forwardY;
+                float upY = rightZ * forwardX - rightX * forwardZ;
+                float upZ = rightX * forwardY - rightY * forwardX;
+
+                camera.target[0] = transform.position[0] + forwardX;
+                camera.target[1] = transform.position[1] + forwardY;
+                camera.target[2] = transform.position[2] + forwardZ;
+
+                camera.up[0] = upX;
+                camera.up[1] = upY;
+                camera.up[2] = upZ;
+
+                if (g_input.w || g_input.s || g_input.a || g_input.d || g_input.q || g_input.e) {
+
+                    if (g_input.w) {
+                        transform.position[0] += forwardX * speed;
+                        transform.position[1] += forwardY * speed;
+                        transform.position[2] += forwardZ * speed;
+                    }
+                    if (g_input.s) {
+                        transform.position[0] -= forwardX * speed;
+                        transform.position[1] -= forwardY * speed;
+                        transform.position[2] -= forwardZ * speed;
+                    }
+                    if (g_input.a) {
+                        transform.position[0] -= rightX * speed;
+                        transform.position[1] -= rightY * speed;
+                        transform.position[2] -= rightZ * speed;
+                    }
+                    if (g_input.d) {
+                        transform.position[0] += rightX * speed;
+                        transform.position[1] += rightY * speed;
+                        transform.position[2] += rightZ * speed;
+                    }
+                    if (g_input.q) {
+                        transform.position[0] -= upX * speed;
+                        transform.position[1] -= upY * speed;
+                        transform.position[2] -= upZ * speed;
+                    }
+                    if (g_input.e) {
+                        transform.position[0] += upX * speed;
+                        transform.position[1] += upY * speed;
+                        transform.position[2] += upZ * speed;
+                    }
+
+                    camera.target[0] = transform.position[0] + forwardX;
+                    camera.target[1] = transform.position[1] + forwardY;
+                    camera.target[2] = transform.position[2] + forwardZ;
+                }
+                break;
             }
         }
 

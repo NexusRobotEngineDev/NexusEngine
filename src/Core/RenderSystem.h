@@ -1,5 +1,6 @@
 #include "Base.h"
 #include "Interfaces.h"
+#include "Components.h"
 #include <memory>
 
 namespace Nexus {
@@ -52,6 +53,11 @@ public:
     void present(uint32_t imageIndex) override;
 
     VK_Renderer* getBridgeRenderer() { return m_bridgeRenderer.get(); }
+
+    /**
+     * @brief 获取默认立方体的网格组件数据
+     */
+    MeshComponent getCubeMeshComponent() const;
 
 private:
     VK_Context* m_context;

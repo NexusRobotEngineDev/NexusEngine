@@ -1,4 +1,5 @@
 #include "RenderSystem.h"
+#include "Components.h"
 #include "Vk/VK_Renderer.h"
 #include "Vk/VK_Buffer.h"
 #include "MeshManager.h"
@@ -34,10 +35,10 @@ Status RenderSystem::initialize() {
          0.5f, -0.5f,  0.5f,  1.0f, 1.0f,
          0.5f,  0.5f,  0.5f,  1.0f, 0.0f,
         -0.5f,  0.5f,  0.5f,  0.0f, 0.0f,
-        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
          0.5f, -0.5f, -0.5f,  0.0f, 1.0f,
-         0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
+        -0.5f, -0.5f, -0.5f,  1.0f, 1.0f,
         -0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
+         0.5f,  0.5f, -0.5f,  0.0f, 0.0f,
         -0.5f,  0.5f,  0.5f,  0.0f, 1.0f,
          0.5f,  0.5f,  0.5f,  1.0f, 1.0f,
          0.5f,  0.5f, -0.5f,  1.0f, 0.0f,
@@ -78,6 +79,14 @@ Status RenderSystem::initialize() {
     NX_ASSERT(m_bridgeRenderer, "VK_Renderer creation failed");
     NX_RETURN_IF_ERROR(m_bridgeRenderer->initialize());
     return OkStatus();
+}
+
+Nexus::MeshComponent RenderSystem::getCubeMeshComponent() const {
+    Nexus::MeshComponent mesh;
+    mesh.vertexOffset = this->m_cubeVertexOffset;
+    mesh.indexOffset = this->m_cubeIndexOffset;
+    mesh.indexCount = 36;
+    return mesh;
 }
 
 Status RenderSystem::renderFrame(Registry* registry) {

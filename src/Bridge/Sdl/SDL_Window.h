@@ -52,9 +52,7 @@ public:
      */
     virtual bool shouldClose() const override;
 
-    virtual void setEventCallback(std::function<void(const void*)> callback) override {
-        m_eventCallback = callback;
-    }
+    virtual void setEventCallback(std::function<void(const void*)> callback) override;
 
 private:
     SDL_Window* m_window = nullptr;

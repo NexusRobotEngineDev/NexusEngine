@@ -99,8 +99,11 @@ Status VK_RmlUi_Renderer::createPipeline(uint32_t width, uint32_t height) {
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &setLayout, 1, &pushConstantRange);
     m_pipelineLayout = device.createPipelineLayout(pipelineLayoutInfo).value;
 
-    vk::Format colorAttachmentFormat = vk::Format::eB8G8R8A8Unorm;
-    vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo(0, 1, &colorAttachmentFormat);
+    VkFormat colorAttachmentFormatNative = VK_FORMAT_B8G8R8A8_UNORM;
+    VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    pipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    pipelineRenderingCreateInfo.pColorAttachmentFormats = &colorAttachmentFormatNative;
+    pipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
 
     vk::GraphicsPipelineCreateInfo pipelineInfo({}, 2, shaderStages, &vertexInputInfo, &inputAssembly, nullptr, &viewportState, &rasterizer, &multisampling, nullptr, &colorBlending, &dynamicState, m_pipelineLayout);
     pipelineInfo.pNext = &pipelineRenderingCreateInfo;

@@ -168,9 +168,16 @@ Status VK_Renderer::createGraphicsPipeline() {
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
-    rasterizer.frontFace = vk::FrontFace::eClockwise;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
+
+    vk::PipelineDepthStencilStateCreateInfo depthStencil;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
 
     vk::PipelineMultisampleStateCreateInfo multisampling;
     multisampling.sampleShadingEnable = VK_FALSE;
@@ -198,7 +205,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     };
 
     vk::PushConstantRange pushConstantRange;
-    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
     pushConstantRange.offset = 0;
     pushConstantRange.size = sizeof(BindlessConstants);
 
@@ -213,12 +220,22 @@ Status VK_Renderer::createGraphicsPipeline() {
     }
 
     vk::Format colorAttachmentFormat = m_swapchain->getImageFormat();
-    vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo;
-    pipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    pipelineRenderingCreateInfo.pColorAttachmentFormats = &colorAttachmentFormat;
+    vk::Format depthAttachmentFormat = m_swapchain->getDepthFormat();
+    if (depthAttachmentFormat == vk::Format::eUndefined) {
+        depthAttachmentFormat = vk::Format::eD32Sfloat;
+    }
+
+    NX_CORE_INFO("Pipeline Rendering Formats: Color={}, Depth={}", vk::to_string(colorAttachmentFormat), vk::to_string(depthAttachmentFormat));
+
+    VkPipelineRenderingCreateInfo renderingCreateInfo{};
+    renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    VkFormat cFmt = static_cast<VkFormat>(colorAttachmentFormat);
+    renderingCreateInfo.colorAttachmentCount = 1;
+    renderingCreateInfo.pColorAttachmentFormats = &cFmt;
+    renderingCreateInfo.depthAttachmentFormat = static_cast<VkFormat>(depthAttachmentFormat);
+    renderingCreateInfo.viewMask = 0;
 
     vk::GraphicsPipelineCreateInfo pipelineInfo;
-    pipelineInfo.pNext = &pipelineRenderingCreateInfo;
     pipelineInfo.stageCount = 2;
     pipelineInfo.pStages = shaderStages;
     pipelineInfo.pVertexInputState = &vertexInputInfo;
@@ -226,12 +243,14 @@ Status VK_Renderer::createGraphicsPipeline() {
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = m_pipelineLayout;
     pipelineInfo.renderPass = nullptr;
     pipelineInfo.subpass = 0;
 
+    pipelineInfo.pNext = &renderingCreateInfo;
     auto result = m_device.createGraphicsPipeline(nullptr, pipelineInfo);
     if (result.result != vk::Result::eSuccess) {
         return InternalError("Failed to create graphics pipeline");
@@ -308,27 +327,38 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
     vk::Extent2D extent = m_swapchain->getExtent();
 
-    if (imageIndex >= m_swapchain->getImages().size() || imageIndex >= m_swapchain->getImageViews().size()) {
-        NX_CORE_ERROR("imageIndex out of range! index: {}, images: {}, views: {}",
-                      imageIndex, m_swapchain->getImages().size(), m_swapchain->getImageViews().size());
-        return;
+    if (!registry) {
+        static bool registryWarned = false;
+        if (!registryWarned) {
+            NX_CORE_ERROR("Renderer: registry is NULL, skipping mesh rendering!");
+            registryWarned = true;
+        }
     }
 
-    vk::ImageMemoryBarrier barrier;
-    barrier.srcAccessMask = {};
-    barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-    barrier.oldLayout = vk::ImageLayout::eUndefined;
-    barrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = m_swapchain->getImages()[imageIndex];
-    barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
+    vk::ImageMemoryBarrier colorBarrier;
+    colorBarrier.srcAccessMask = {};
+    colorBarrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.oldLayout = vk::ImageLayout::eUndefined;
+    colorBarrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.image = m_swapchain->getImages()[imageIndex];
+    colorBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    colorBarrier.subresourceRange.baseMipLevel = 0;
+    colorBarrier.subresourceRange.levelCount = 1;
+    colorBarrier.subresourceRange.baseArrayLayer = 0;
+    colorBarrier.subresourceRange.layerCount = 1;
 
-    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eColorAttachmentOutput, {}, 0, nullptr, 0, nullptr, 1, &barrier);
+    vk::ImageMemoryBarrier depthBarrier = colorBarrier;
+    depthBarrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+    depthBarrier.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthBarrier.image = static_cast<VK_Swapchain*>(m_swapchain)->getDepthImage();
+    depthBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+    vk::ImageMemoryBarrier barriers[] = { colorBarrier, depthBarrier };
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                                  vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+                                  {}, 0, nullptr, 0, nullptr, 2, barriers);
 
     vk::RenderingAttachmentInfo colorAttachment;
     colorAttachment.imageView = m_swapchain->getImageViews()[imageIndex];
@@ -337,11 +367,19 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
     colorAttachment.clearValue = vk::ClearValue(std::array<float, 4>{0.1f, 0.1f, 0.4f, 1.0f});
 
+    vk::RenderingAttachmentInfo depthAttachment;
+    depthAttachment.imageView = static_cast<VK_Swapchain*>(m_swapchain)->getDepthImageView();
+    depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+
     vk::RenderingInfo renderingInfo;
     renderingInfo.renderArea = vk::Rect2D({0, 0}, extent);
     renderingInfo.layerCount = 1;
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachments = &colorAttachment;
+    renderingInfo.pDepthAttachment = &depthAttachment;
 
     commandBuffer.beginRendering(&renderingInfo);
 
@@ -349,13 +387,6 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
     vk::DescriptorSet bindlessSet = m_context->getBindlessManager()->getSet();
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &bindlessSet, 0, nullptr);
-
-    if (m_testTexture) {
-        BindlessConstants constants;
-        constants.textureIndex = m_testTexture->getBindlessTextureIndex();
-        constants.samplerIndex = m_testTexture->getBindlessSamplerIndex();
-        commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, constants);
-    }
 
     vk::Viewport viewport;
     viewport.x = 0.0f;
@@ -387,13 +418,51 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             camera.aspect = (float)extent.width / (float)extent.height;
 
             auto proj = camera.computeProjectionMatrix();
-            std::array<float, 16> view = {
-                1,0,0,0,
-                0,1,0,0,
-                0,0,1,0,
-                -transform.worldMatrix[12], -transform.worldMatrix[13], -transform.worldMatrix[14], 1
+
+            float pos[3] = { transform.position[0], transform.position[1], transform.position[2] };
+            float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
+            float upVector[3] = { camera.up[0], camera.up[1], camera.up[2] };
+
+            float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
+            float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
+            if (fLen > 1e-5f) { fwd[0]/=fLen; fwd[1]/=fLen; fwd[2]/=fLen; }
+            else { fwd[0]=0; fwd[1]=0; fwd[2]=-1; }
+
+            float right[3] = {
+                fwd[1]*upVector[2] - fwd[2]*upVector[1],
+                fwd[2]*upVector[0] - fwd[0]*upVector[2],
+                fwd[0]*upVector[1] - fwd[1]*upVector[0]
             };
-            viewProj = multiplyMat4(view, proj);
+            float rLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+            if (rLen > 1e-5f) { right[0]/=rLen; right[1]/=rLen; right[2]/=rLen; }
+            else { right[0]=1; right[1]=0; right[2]=0; }
+
+            float up[3] = {
+                right[1]*fwd[2] - right[2]*fwd[1],
+                right[2]*fwd[0] - right[0]*fwd[2],
+                right[0]*fwd[1] - right[1]*fwd[0]
+            };
+
+            std::array<float, 16> view = {
+                right[0], up[0], -fwd[0], 0.0f,
+                right[1], up[1], -fwd[1], 0.0f,
+                right[2], up[2], -fwd[2], 0.0f,
+                -(right[0]*pos[0] + right[1]*pos[1] + right[2]*pos[2]),
+                -(up[0]*pos[0] + up[1]*pos[1] + up[2]*pos[2]),
+                fwd[0]*pos[0] + fwd[1]*pos[1] + fwd[2]*pos[2],
+                1.0f
+            };
+
+            viewProj = multiplyMat4(proj, view);
+
+            static int camLogCounter = 0;
+            if (camLogCounter++ % 600 == 0) {
+                NX_CORE_INFO("Camera Debug:");
+                NX_CORE_INFO("  Pos: ({}, {}, {})", transform.position[0], transform.position[1], transform.position[2]);
+                NX_CORE_INFO("  View[12..14]: {}, {}, {}", view[12], view[13], view[14]);
+                NX_CORE_INFO("  Proj[10..11]: {}, {}", proj[10], proj[11]);
+                NX_CORE_INFO("  Proj[14..15]: {}, {}", proj[14], proj[15]);
+            }
             break;
         }
 
@@ -408,11 +477,26 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
             commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(ib)->getHandle(), 0, vk::IndexType::eUint32);
 
+            static int logCounter = 0;
+            bool shouldLog = (logCounter++ % 600 == 0);
+
+            size_t meshCount = 0;
             for (auto entity : meshView) {
                 auto& mesh = meshView.get<MeshComponent>(entity);
                 auto& transform = meshView.get<TransformComponent>(entity);
 
-                std::array<float, 16> mvp = multiplyMat4(transform.worldMatrix, viewProj);
+                std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
+
+                if (shouldLog) {
+                    NX_CORE_INFO("Drawing Component: entityID={}, indexCount={}, vOffset={}, worldPos=({},{},{})",
+                                 (uint32_t)entity, mesh.indexCount, mesh.vertexOffset,
+                                 transform.position[0], transform.position[1], transform.position[2]);
+                    NX_CORE_INFO("MVP Matrix (Col-Major):");
+                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[0], mvp[4], mvp[8], mvp[12]);
+                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[1], mvp[5], mvp[9], mvp[13]);
+                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[2], mvp[6], mvp[10], mvp[14]);
+                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[3], mvp[7], mvp[11], mvp[15]);
+                }
 
                 BindlessConstants constants = {};
                 if (m_testTexture) {
@@ -420,9 +504,19 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                     constants.samplerIndex = m_testTexture->getBindlessSamplerIndex();
                 }
                 constants.mvp = mvp;
-                commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, constants);
+                commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
 
                 commandBuffer.drawIndexed(mesh.indexCount, 1, mesh.indexOffset, mesh.vertexOffset, 0);
+                meshCount++;
+            }
+            if (shouldLog) {
+                NX_CORE_INFO("Recorded {} mesh draw calls in this command buffer.", meshCount);
+            }
+        } else {
+            static bool bufferWarned = false;
+            if (!bufferWarned) {
+                NX_CORE_WARN("Rendering skipped: Global VertexBuffer({}) or IndexBuffer({}) is NULL!", (void*)vb, (void*)ib);
+                bufferWarned = true;
             }
         }
     } else {
@@ -436,12 +530,12 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
     commandBuffer.endRendering();
 
-    barrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
-    barrier.dstAccessMask = {};
-    barrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    barrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
+    colorBarrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.dstAccessMask = {};
+    colorBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
 
-    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &barrier);
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
 
     (void)commandBuffer.end();
 }

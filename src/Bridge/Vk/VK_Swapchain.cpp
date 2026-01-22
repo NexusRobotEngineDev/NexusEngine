@@ -15,6 +15,7 @@ VK_Swapchain::~VK_Swapchain() {
 Status VK_Swapchain::initialize(uint32_t width, uint32_t height) {
     NX_RETURN_IF_ERROR(createSwapchain(width, height));
     NX_RETURN_IF_ERROR(createImageViews());
+    NX_RETURN_IF_ERROR(createDepthResources());
     return OkStatus();
 }
 
@@ -28,6 +29,13 @@ void VK_Swapchain::shutdown() {
         m_device.destroyImageView(imageView);
     }
     m_imageViews.clear();
+
+    if (m_depthImageView) m_device.destroyImageView(m_depthImageView);
+    if (m_depthImage) m_device.destroyImage(m_depthImage);
+    if (m_depthImageMemory) m_device.freeMemory(m_depthImageMemory);
+    m_depthImageView = nullptr;
+    m_depthImage = nullptr;
+    m_depthImageMemory = nullptr;
 
     if (m_swapchain) {
         m_device.destroySwapchainKHR(m_swapchain);
@@ -122,6 +130,76 @@ Status VK_Swapchain::createImageViews() {
     }
 
     return OkStatus();
+}
+
+Status VK_Swapchain::createDepthResources() {
+    m_depthFormat = findDepthFormat();
+
+    vk::ImageCreateInfo imageInfo;
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = m_extent.width;
+    imageInfo.extent.height = m_extent.height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = m_depthFormat;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+
+    auto imgResult = m_device.createImage(imageInfo);
+    if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth image");
+    m_depthImage = imgResult.value;
+
+    vk::MemoryRequirements memRequirements = m_device.getImageMemoryRequirements(m_depthImage);
+    vk::MemoryAllocateInfo allocInfo;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+    auto memResult = m_device.allocateMemory(allocInfo);
+    if (memResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate depth image memory");
+    m_depthImageMemory = memResult.value;
+
+    m_device.bindImageMemory(m_depthImage, m_depthImageMemory, 0);
+
+    vk::ImageViewCreateInfo viewInfo;
+    viewInfo.image = m_depthImage;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = m_depthFormat;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    auto viewResult = m_device.createImageView(viewInfo);
+    if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth image view");
+    m_depthImageView = viewResult.value;
+
+    return OkStatus();
+}
+
+vk::Format VK_Swapchain::findDepthFormat() {
+    std::vector<vk::Format> candidates = { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint };
+    for (vk::Format format : candidates) {
+        vk::FormatProperties props = m_physicalDevice.getFormatProperties(format);
+        if (props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment) {
+            return format;
+        }
+    }
+    return vk::Format::eD32Sfloat;
+}
+
+uint32_t VK_Swapchain::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) {
+    vk::PhysicalDeviceMemoryProperties memProperties = m_physicalDevice.getMemoryProperties();
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    return 0;
 }
 
 } // namespace Nexus
