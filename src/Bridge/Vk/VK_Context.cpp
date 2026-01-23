@@ -100,43 +100,96 @@ void VK_Context::shutdown() {
 }
 
 Status VK_Context::createInstance() {
-    vk::ApplicationInfo appInfo("Nexus Engine", VK_MAKE_VERSION(1, 0, 0), "Nexus", VK_MAKE_VERSION(1, 0, 0), VK_API_VERSION_1_3);
+    uint32_t apiVersion = VK_API_VERSION_1_3;
+    NX_CORE_INFO("Requested Vulkan API Version: {}.{}.{}",
+                 VK_API_VERSION_MAJOR(apiVersion),
+                 VK_API_VERSION_MINOR(apiVersion),
+                 VK_API_VERSION_PATCH(apiVersion));
 
-    std::vector<const char*> extensions;
+    uint32_t supportedVersion = 0;
+    if (vk::enumerateInstanceVersion(&supportedVersion) == vk::Result::eSuccess) {
+        NX_CORE_INFO("System Supported Vulkan Instance Version: {}.{}.{}",
+                     VK_API_VERSION_MAJOR(supportedVersion),
+                     VK_API_VERSION_MINOR(supportedVersion),
+                     VK_API_VERSION_PATCH(supportedVersion));
+    }
+
+    vk::ApplicationInfo appInfo("Nexus Engine", VK_MAKE_VERSION(1, 0, 0), "Nexus", VK_MAKE_VERSION(1, 0, 0), apiVersion);
+
+    std::vector<const char*> requestedExtensions;
     #ifdef ENABLE_SDL
     if (SDL_WasInit(SDL_INIT_VIDEO)) {
         NX_CORE_INFO("Fetching SDL Instance Extensions");
         uint32_t sdlExtensionCount = 0;
         const char* const* sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
         if (sdlExtensions) {
-            NX_CORE_INFO("SDL Extensions found: {}", sdlExtensionCount);
             for (uint32_t i = 0; i < sdlExtensionCount; i++) {
-                extensions.push_back(sdlExtensions[i]);
-                NX_CORE_INFO("  - {}", sdlExtensions[i]);
+                requestedExtensions.push_back(sdlExtensions[i]);
             }
         }
-    } else {
-        NX_CORE_INFO("SDL Video not initialized, skipping extensions (Headless mode suggested)");
     }
     #endif
 
-    if (m_enableValidationLayers) {
-        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    bool useValidationLayers = m_enableValidationLayers;
+    if (useValidationLayers) {
+        requestedExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
-    vk::InstanceCreateInfo createInfo({}, &appInfo, 0, nullptr, static_cast<uint32_t>(extensions.size()), extensions.data());
-
-    if (m_enableValidationLayers) {
-        createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
-        createInfo.ppEnabledLayerNames = m_validationLayers.data();
+    auto availableExtensionsResult = vk::enumerateInstanceExtensionProperties();
+    std::set<std::string> availableExtSet;
+    if (availableExtensionsResult.result == vk::Result::eSuccess) {
+        for (const auto& ext : availableExtensionsResult.value) {
+            availableExtSet.insert(ext.extensionName);
+        }
     }
 
-    auto result = vk::createInstance(createInfo);
-    if (result.result != vk::Result::eSuccess) {
-        NX_CORE_ERROR("Failed to create Vulkan instance: {}", vk::to_string(result.result));
-        return InternalError("Failed to create Vulkan instance");
+    std::vector<const char*> finalExtensions;
+    for (const char* extName : requestedExtensions) {
+        if (availableExtSet.find(extName) != availableExtSet.end()) {
+            finalExtensions.push_back(extName);
+            NX_CORE_INFO("  - Extension Enabled: {}", extName);
+        } else {
+            NX_CORE_WARN("  [MISSING] Required Instance Extension NOT FOUND: {}", extName);
+        }
     }
-    m_instance = result.value;
+
+    std::vector<const char*> finalLayers;
+    if (useValidationLayers) {
+        auto availableLayersResult = vk::enumerateInstanceLayerProperties();
+        std::set<std::string> availableLayerSet;
+        if (availableLayersResult.result == vk::Result::eSuccess) {
+            for (const auto& layer : availableLayersResult.value) {
+                availableLayerSet.insert(layer.layerName);
+            }
+        }
+
+        for (const char* layerName : m_validationLayers) {
+            if (availableLayerSet.find(layerName) != availableLayerSet.end()) {
+                finalLayers.push_back(layerName);
+                NX_CORE_INFO("  - Layer Enabled: {}", layerName);
+            } else {
+                NX_CORE_WARN("  [MISSING] Requested Validation Layer NOT FOUND: {}", layerName);
+                NX_CORE_WARN("  (Note: On Linux/Debian/Ubuntu, try: sudo apt install vulkan-validationlayers)");
+                useValidationLayers = false;
+            }
+        }
+    }
+
+    vk::InstanceCreateInfo createInfo({}, &appInfo,
+                                     static_cast<uint32_t>(finalLayers.size()), finalLayers.data(),
+                                     static_cast<uint32_t>(finalExtensions.size()), finalExtensions.data());
+
+    try {
+        auto result = vk::createInstance(createInfo);
+        if (result.result != vk::Result::eSuccess) {
+            NX_CORE_ERROR("Failed to create Vulkan instance: {}", vk::to_string(result.result));
+            return InternalError("Failed to create Vulkan instance due to driver or environment issues.");
+        }
+        m_instance = result.value;
+    } catch (const std::exception& e) {
+        NX_CORE_ERROR("Vulkan Instance Creation Exception: {}", e.what());
+        return InternalError("Vulkan Instance Creation crashed. Check if your hardware/driver supports Vulkan 1.3.");
+    }
 
     NX_CORE_INFO("Vulkan Instance created successfully");
     return OkStatus();
