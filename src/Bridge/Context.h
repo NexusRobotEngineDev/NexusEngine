@@ -47,7 +47,11 @@ namespace Nexus {
     using PhysicsSystemPtr = ::Nexus::IPhysicsSystem*;
 #endif
 
-ContextPtr CreateContext();
+struct EngineConfig {
+    bool enableValidationLayers = true;
+};
+
+ContextPtr CreateContext(const EngineConfig& config = EngineConfig{});
 WindowPtr CreateNativeWindow();
 
 } // namespace Nexus

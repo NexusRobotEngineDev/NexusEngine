@@ -96,7 +96,7 @@ void OnWindowEvent(const void* event) {
     }
 }
 
-Status InitializeEngine() {
+Status InitializeEngine(const EngineConfig& config) {
     g_ecsRegistry = std::make_unique<Registry>();
 
     auto entity = g_ecsRegistry->create();
@@ -107,7 +107,7 @@ Status InitializeEngine() {
     NX_RETURN_IF_ERROR(g_windowThread->createWindowAsync("Nexus Engine", 1280, 720, g_window));
     g_window->setEventCallback(OnWindowEvent);
 
-    g_context = CreateContext();
+    g_context = CreateContext(config);
     if (!g_context) return InternalError("Context creation failed");
 
     NX_RETURN_IF_ERROR(g_context->initialize());
@@ -387,11 +387,19 @@ int main(int argc, char* argv[]) {
     Log::init();
     Log::info("Nexus Engine Starting...");
 
+    EngineConfig config;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--no-validation") {
+            config.enableValidationLayers = false;
+        }
+    }
+
     if (auto status = ResourceLoader::initialize(); !status.ok()) {
         Log::warn("ResourceLoader failed to detect base path: {}", status.message());
     }
 
-    if (auto status = InitializeEngine(); !status.ok()) {
+    if (auto status = InitializeEngine(config); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());
         return -1;
     }

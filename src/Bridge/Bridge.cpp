@@ -7,15 +7,15 @@ namespace Nexus {
  * @brief 创建上下文
  * @return 返回上下文指针
  */
-ContextPtr CreateContext() {
-    return new VK_Context();
+ContextPtr CreateContext(const EngineConfig& config) {
+    return new VK_Context(config.enableValidationLayers);
 }
 #else
 /**
  * @brief 创建上下文
  * @return 返回上下文指针
  */
-ContextPtr CreateContext() {
+ContextPtr CreateContext(const EngineConfig& config) {
     return nullptr;
 }
 #endif

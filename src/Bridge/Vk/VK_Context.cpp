@@ -14,7 +14,11 @@
 
 namespace Nexus {
 
-VK_Context::VK_Context() : m_instance(nullptr), m_surface(nullptr), m_debugMessenger(nullptr), m_physicalDevice(nullptr), m_device(nullptr), m_graphicsQueue(nullptr) {}
+VK_Context::VK_Context(bool enableValidation) : m_instance(nullptr), m_surface(nullptr), m_debugMessenger(nullptr), m_physicalDevice(nullptr), m_device(nullptr), m_graphicsQueue(nullptr), m_enableValidationLayers(enableValidation) {
+#ifdef NDEBUG
+    m_enableValidationLayers = false;
+#endif
+}
 
 VK_Context::~VK_Context() {
     shutdown();

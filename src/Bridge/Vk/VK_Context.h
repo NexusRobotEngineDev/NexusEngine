@@ -12,7 +12,7 @@ namespace Nexus {
  */
 class VK_Context : public IContext {
 public:
-    VK_Context();
+    VK_Context(bool enableValidation = true);
     virtual ~VK_Context() override;
 
     /**
@@ -102,11 +102,7 @@ private:
         "VK_LAYER_KHRONOS_validation"
     };
 
-    #ifdef NDEBUG
-    const bool m_enableValidationLayers = false;
-    #else
-    const bool m_enableValidationLayers = true;
-    #endif
+    bool m_enableValidationLayers = true;
 };
 
 } // namespace Nexus
