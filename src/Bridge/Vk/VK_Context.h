@@ -50,6 +50,8 @@ public:
 
     VK_BindlessManager* getBindlessManager() const { return m_bindlessManager.get(); }
     virtual std::unique_ptr<IBuffer> createBuffer(uint64_t size, uint32_t usage, uint32_t properties) override;
+
+    bool isMeshShaderSupported() const { return m_meshShaderSupported; }
     virtual std::unique_ptr<ITexture> createTexture(const ImageData& imageData, TextureUsage usage) override;
     virtual std::unique_ptr<ITexture> createTexture(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) override;
 
@@ -103,6 +105,7 @@ private:
     };
 
     bool m_enableValidationLayers = true;
+    bool m_meshShaderSupported = false;
 };
 
 } // namespace Nexus

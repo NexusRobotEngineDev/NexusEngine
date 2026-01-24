@@ -289,7 +289,6 @@ void RunMainLoop() {
                 float st = std::sin(g_input.pitch);
                 float ct = std::cos(g_input.pitch);
 
-
                 float forwardX = ct * sf;
                 float forwardY = -st;
                 float forwardZ = -ct * cf;

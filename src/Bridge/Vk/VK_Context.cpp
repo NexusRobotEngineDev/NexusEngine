@@ -257,19 +257,42 @@ Status VK_Context::createLogicalDevice() {
     features12.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
     features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
 
-    vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures{};
-    meshFeatures.pNext = &features12;
-    meshFeatures.meshShader = VK_TRUE;
-    meshFeatures.taskShader = VK_TRUE;
+    features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
 
+    auto availableExtensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
+    std::set<std::string> availableExtSet;
+    if (availableExtensionsResult.result == vk::Result::eSuccess) {
+        for (const auto& ext : availableExtensionsResult.value) {
+            availableExtSet.insert(ext.extensionName);
+        }
+    }
+
+    bool hasMeshShader = availableExtSet.count(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+    bool hasSpirv14 = availableExtSet.count(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+    bool hasFloatControls = availableExtSet.count(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+
+    m_meshShaderSupported = hasMeshShader && hasSpirv14 && hasFloatControls;
+
+    vk::PhysicalDeviceMeshShaderFeaturesEXT meshFeatures{};
+    if (m_meshShaderSupported) {
+        meshFeatures.pNext = &features12;
+        meshFeatures.meshShader = VK_TRUE;
+        meshFeatures.taskShader = VK_TRUE;
+    }
 
     std::vector<const char*> deviceExtensions = {
-        VK_EXT_MESH_SHADER_EXTENSION_NAME,
-        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-        VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
         VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
     };
+
+    if (m_meshShaderSupported) {
+        deviceExtensions.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+        deviceExtensions.push_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+        deviceExtensions.push_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+        NX_CORE_INFO("Mesh Shader Extensions Enqueueing.");
+    } else {
+        NX_CORE_INFO("Mesh Shader Extensions Not Supported, falling back.");
+    }
     if (m_surface) deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     vk::PhysicalDeviceFeatures deviceFeatures{};
     deviceFeatures.drawIndirectFirstInstance = VK_TRUE;
@@ -277,7 +300,7 @@ Status VK_Context::createLogicalDevice() {
     deviceFeatures.samplerAnisotropy = VK_TRUE;
 
     vk::DeviceCreateInfo createInfo;
-    createInfo.pNext = &meshFeatures;
+    createInfo.pNext = m_meshShaderSupported ? &meshFeatures : (void*)&features12;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
     createInfo.pEnabledFeatures = &deviceFeatures;
