@@ -138,9 +138,22 @@ struct MeshComponent {
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
 
+    uint32_t albedoTexture = 0;
+    uint32_t normalTexture = 0;
+    uint32_t metallicRoughnessTexture = 0;
+    uint32_t occlusionTexture = 0;
+    uint32_t emissiveTexture = 0;
+    uint32_t samplerIndex = 0;
+
+    std::array<float, 4> albedoFactor = {1.0f, 1.0f, 1.0f, 1.0f};
+    float metallicFactor = 1.0f;
+    float roughnessFactor = 1.0f;
+
     template<class Archive>
     void serialize(Archive& ar) {
         ar(vertexOffset, indexOffset, indexCount);
+        ar(albedoTexture, normalTexture, metallicRoughnessTexture, occlusionTexture, emissiveTexture, samplerIndex);
+        ar(albedoFactor, metallicFactor, roughnessFactor);
     }
 };
 

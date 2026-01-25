@@ -97,7 +97,9 @@ Status VK_RmlUi_Renderer::createPipeline(uint32_t width, uint32_t height) {
     vk::PushConstantRange pushConstantRange(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, 24);
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &setLayout, 1, &pushConstantRange);
-    m_pipelineLayout = device.createPipelineLayout(pipelineLayoutInfo).value;
+    auto layoutResult = device.createPipelineLayout(pipelineLayoutInfo);
+    if (layoutResult.result != vk::Result::eSuccess) return InternalError("Failed to create RmlUi pipeline layout");
+    m_pipelineLayout = layoutResult.value;
 
     VkFormat colorAttachmentFormatNative = VK_FORMAT_B8G8R8A8_UNORM;
     VkPipelineRenderingCreateInfo pipelineRenderingCreateInfo = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
@@ -108,7 +110,9 @@ Status VK_RmlUi_Renderer::createPipeline(uint32_t width, uint32_t height) {
     vk::GraphicsPipelineCreateInfo pipelineInfo({}, 2, shaderStages, &vertexInputInfo, &inputAssembly, nullptr, &viewportState, &rasterizer, &multisampling, nullptr, &colorBlending, &dynamicState, m_pipelineLayout);
     pipelineInfo.pNext = &pipelineRenderingCreateInfo;
 
-    m_pipeline = device.createGraphicsPipeline(nullptr, pipelineInfo).value;
+    auto pipelineResult = device.createGraphicsPipeline(nullptr, pipelineInfo);
+    if (pipelineResult.result != vk::Result::eSuccess) return InternalError("Failed to create RmlUi graphics pipeline");
+    m_pipeline = pipelineResult.value;
 
     device.destroyShaderModule(fragShaderModule);
     device.destroyShaderModule(vertShaderModule);

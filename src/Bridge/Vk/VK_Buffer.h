@@ -20,7 +20,7 @@ public:
     uint64_t getSize() const override { return (uint64_t)m_size; }
     void* getNativeHandle() const override { return (void*)m_buffer; }
     Status create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties);
-    Status uploadData(const void* data, uint64_t size) override;
+    Status uploadData(const void* data, uint64_t size, uint64_t offset = 0) override;
     void destroy();
     vk::Buffer getHandle() const { return m_buffer; }
     vk::DeviceMemory getMemory() const { return m_memory; }

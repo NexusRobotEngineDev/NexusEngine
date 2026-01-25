@@ -37,7 +37,9 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
     NX_RETURN_IF_ERROR(createLogicalDevice());
 
     vk::CommandPoolCreateInfo poolInfo({}, m_graphicsQueueFamilyIndex);
-    m_commandPool = m_device.createCommandPool(poolInfo).value;
+    auto poolResult = m_device.createCommandPool(poolInfo);
+    if (poolResult.result != vk::Result::eSuccess) return InternalError("Failed to create command pool");
+    m_commandPool = poolResult.value;
 
     m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
     NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
@@ -54,7 +56,9 @@ Status VK_Context::initializeHeadless() {
     NX_RETURN_IF_ERROR(createLogicalDevice());
     NX_CORE_INFO("Creating Command Pool");
     vk::CommandPoolCreateInfo poolInfo({}, m_graphicsQueueFamilyIndex);
-    m_commandPool = m_device.createCommandPool(poolInfo).value;
+    auto poolResult = m_device.createCommandPool(poolInfo);
+    if (poolResult.result != vk::Result::eSuccess) return InternalError("Failed to create command pool");
+    m_commandPool = poolResult.value;
     NX_CORE_INFO("Initializing Bindless Manager");
     m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
     NX_RETURN_IF_ERROR(m_bindlessManager->initialize());

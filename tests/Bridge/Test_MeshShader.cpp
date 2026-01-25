@@ -16,18 +16,17 @@ TEST(MeshShaderTest, PipelineCreation) {
     vk::Device device = context.getDevice();
 
     std::string source = R"(
-        struct VSOutput { float4 pos : SV_POSITION; };
-        [numthreads(3, 1, 1)]
-        [outputtopology("triangle")]
-        void MSMain(out indices uint3 tris[1], out vertices VSOutput verts[3]) {
-            SetMeshOutputs(3, 1);
-            verts[0].pos = float4(0, 0, 0, 1);
-            verts[1].pos = float4(1, 0, 0, 1);
-            verts[2].pos = float4(0, 1, 0, 1);
-            tris[0] = uint3(0, 1, 2);
-        }
-        float4 PSMain() : SV_Target { return float4(1, 1, 1, 1); }
-    )";
+struct Payload { uint meshletIndex; };
+struct VSOutput { float4 pos : SV_POSITION; };
+[numthreads(3, 1, 1)]
+[outputtopology("triangle")]
+void MSMain(uint gtid : SV_GroupThreadID, in payload Payload p, out indices uint3 tris[1], out vertices VSOutput verts[3]) {
+    SetMeshOutputs(3, 1);
+    verts[gtid].pos = float4(0, 0, 0, 1);
+    if (gtid == 0) tris[0] = uint3(0, 1, 2);
+}
+float4 PSMain() : SV_Target { return float4(1, 1, 1, 1); }
+)";
 
     auto meshResult = VK_ShaderCompiler::compileLayer(device, source, "MSMain", shaderc_mesh_shader);
     auto pixelResult = VK_ShaderCompiler::compileLayer(device, source, "PSMain", shaderc_fragment_shader);

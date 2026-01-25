@@ -101,7 +101,11 @@ Status VK_Swapchain::createSwapchain(uint32_t width, uint32_t height) {
     }
 
     m_swapchain = result.value;
-    m_images = m_device.getSwapchainImagesKHR(m_swapchain).value;
+    auto imagesResult = m_device.getSwapchainImagesKHR(m_swapchain);
+    if (imagesResult.result != vk::Result::eSuccess) {
+        return InternalError("Failed to get swapchain images");
+    }
+    m_images = imagesResult.value;
     m_imageFormat = surfaceFormat.format;
     m_extent = extent;
 

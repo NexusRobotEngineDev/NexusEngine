@@ -28,13 +28,13 @@ Status MeshManager::addMesh(const std::vector<float>& vertices, const std::vecto
     size_t iSize = indices.size() * sizeof(uint32_t);
 
 
-    NX_RETURN_IF_ERROR(m_vertexBuffer->uploadData(vertices.data(), vSize));
-    NX_RETURN_IF_ERROR(m_indexBuffer->uploadData(indices.data(), iSize));
+    NX_RETURN_IF_ERROR(m_vertexBuffer->uploadData(vertices.data(), vSize, m_currentVertexOffset * sizeof(float) * 8));
+    NX_RETURN_IF_ERROR(m_indexBuffer->uploadData(indices.data(), iSize, m_currentIndexOffset * sizeof(uint32_t)));
 
     outVertexOffset = m_currentVertexOffset;
     outIndexOffset = m_currentIndexOffset;
 
-    m_currentVertexOffset += (uint32_t)vertices.size();
+    m_currentVertexOffset += (uint32_t)(vertices.size() / 8);
     m_currentIndexOffset += (uint32_t)indices.size();
 
     return OkStatus();

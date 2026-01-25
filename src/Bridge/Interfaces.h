@@ -41,7 +41,7 @@ public:
     virtual void unmap() = 0;
     virtual uint64_t getSize() const = 0;
     virtual void* getNativeHandle() const = 0;
-    virtual Status uploadData(const void* data, uint64_t size) = 0;
+    virtual Status uploadData(const void* data, uint64_t size, uint64_t offset = 0) = 0;
 };
 
 /**
@@ -91,6 +91,7 @@ class IPhysicsSystem {
 public:
     virtual ~IPhysicsSystem() = default;
     virtual Status initialize() = 0;
+    virtual Status loadModel(const std::string& path) = 0;
     virtual void update(float deltaTime) = 0;
     virtual void shutdown() = 0;
 };
@@ -104,6 +105,8 @@ public:
     virtual uint32_t getWidth() const = 0;
     virtual uint32_t getHeight() const = 0;
     virtual TextureFormat getFormat() const = 0;
+    virtual uint32_t getBindlessTextureIndex() const { return 0; }
+    virtual uint32_t getBindlessSamplerIndex() const { return 0; }
 };
 
 class Registry;

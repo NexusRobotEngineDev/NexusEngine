@@ -59,6 +59,8 @@ public:
      */
     MeshComponent getCubeMeshComponent() const;
 
+    MeshManager* getMeshManager() const { return m_meshManager.get(); }
+
 private:
     VK_Context* m_context;
     VK_Swapchain* m_swapchain;

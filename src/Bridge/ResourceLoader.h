@@ -47,6 +47,13 @@ public:
      */
     static StatusOr<ImageData> loadImage(const std::string& path);
 
+    /**
+     * @brief 从内存加载图像数据
+     * @param data 内存指针
+     * @param size 内存大小
+     */
+    static StatusOr<ImageData> loadImageFromMemory(const uint8_t* data, size_t size);
+
 private:
     static std::string s_basePath;
 };

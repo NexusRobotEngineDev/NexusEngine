@@ -1,9 +1,21 @@
-struct MeshConstants {
-    float4 color;
+struct BindlessConstants {
+    uint textureIndex;
+    uint normalIndex;
+    uint metallicRoughnessIndex;
+    uint occlusionIndex;
+    uint emissiveIndex;
+    uint samplerIndex;
+
+    float4 albedoFactor;
+    float metallicFactor;
+    float roughnessFactor;
+    float2 padding;
+
+    float4x4 mvp;
 };
 
 [[vk::push_constant]]
-MeshConstants constants;
+BindlessConstants constants;
 
 struct Payload {
     uint meshletIndex;
@@ -37,8 +49,8 @@ void MSMain(
             float2(0.5, 0.5),
             float2(-0.5, 0.5)
         };
-        verts[gtid].position = float4(positions[gtid], 0.0, 1.0);
-        verts[gtid].color = constants.color;
+        verts[gtid].position = float4(positions[gtid], 0.0, 1.0) * constants.mvp;
+        verts[gtid].color = constants.albedoFactor;
     }
 
     if (gtid == 0) {
