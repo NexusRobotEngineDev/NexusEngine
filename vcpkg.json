@@ -18,6 +18,8 @@
     "shaderc",
     "spdlog",
     "stb",
-    "vulkan"
+    "vulkan",
+    "zeromq",
+    "cppzmq"
   ]
 }

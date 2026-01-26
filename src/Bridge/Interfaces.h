@@ -94,6 +94,11 @@ public:
     virtual Status loadModel(const std::string& path) = 0;
     virtual void update(float deltaTime) = 0;
     virtual void shutdown() = 0;
+
+    /**
+     * @brief 获取指定名称刚体的世界坐标与旋转
+     */
+    virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) = 0;
 };
 
 /**

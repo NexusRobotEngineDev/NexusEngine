@@ -59,4 +59,22 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
     }
 }
 
+bool MuJoCo_PhysicsSystem::getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) {
+    if (!m_model || !m_data) return false;
+
+    int bodyId = mj_name2id(m_model, mjOBJ_BODY, name.c_str());
+    if (bodyId == -1) return false;
+
+    outPos[0] = m_data->xpos[3 * bodyId + 0];
+    outPos[1] = m_data->xpos[3 * bodyId + 1];
+    outPos[2] = m_data->xpos[3 * bodyId + 2];
+
+    outRot[3] = m_data->xquat[4 * bodyId + 0];
+    outRot[0] = m_data->xquat[4 * bodyId + 1];
+    outRot[1] = m_data->xquat[4 * bodyId + 2];
+    outRot[2] = m_data->xquat[4 * bodyId + 3];
+
+    return true;
+}
+
 } // namespace Nexus
