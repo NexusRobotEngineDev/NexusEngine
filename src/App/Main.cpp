@@ -17,6 +17,8 @@
 
 #include "Core/Scene.h"
 #include "Core/HierarchySystem.h"
+#include "Core/RoboticsDynamicsSystem.h"
+#include "Core/RosBridgeSystem.h"
 #include "Core/SceneSerializer.h"
 #include "Core/ModelLoader.h"
 #include "Core/TextureManager.h"
@@ -42,6 +44,7 @@ std::unique_ptr<EditorUIManager> g_editorUIManager;
 
 std::unique_ptr<Scene> g_scene;
 std::unique_ptr<TextureManager> g_textureManager;
+std::unique_ptr<RosBridgeSystem> g_rosBridge;
 
 struct Position { float x, y; };
 
@@ -153,6 +156,13 @@ Status InitializeEngine(const EngineConfig& config) {
         }
 #endif
     } else {
+#if ENABLE_VULKAN
+        if (g_renderer && g_textureManager) {
+            Scene dummyScene("Preload");
+            ModelLoader::loadModel(g_textureManager.get(), &dummyScene, g_renderer->getMeshManager(), "Data/Models/drone.glb");
+        }
+#endif
+
         bool cameraPosFixed = false;
         auto& registry = g_scene->getRegistry();
         auto cameraView = registry.view<CameraComponent>();
@@ -209,7 +219,10 @@ Status InitializeEngine(const EngineConfig& config) {
         g_physicsThread->startThread();
     }
 
-
+    g_rosBridge = std::make_unique<RosBridgeSystem>();
+    if (auto status = g_rosBridge->initialize(); !status.ok()) {
+        NX_CORE_WARN("Failed to start ROS Bridge: {}", status.message());
+    }
 
     return OkStatus();
 }
@@ -223,6 +236,11 @@ void ShutdownEngine() {
         g_physicsSystem->shutdown();
         delete g_physicsSystem;
         g_physicsSystem = nullptr;
+    }
+
+    if (g_rosBridge) {
+        g_rosBridge->shutdown();
+        g_rosBridge.reset();
     }
 
 #if ENABLE_VULKAN
@@ -380,7 +398,11 @@ void RunMainLoop() {
         if (g_rhiThread) {
             g_rhiThread->requestSync();
             if (g_scene) {
+                RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 HierarchySystem::update(g_scene->getRegistry());
+                if (g_rosBridge) {
+                    g_rosBridge->publishReplicas(g_scene->getRegistry());
+                }
             }
             g_rhiThread->resumeSync();
 

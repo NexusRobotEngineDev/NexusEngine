@@ -19,7 +19,7 @@ public:
     virtual void update(float deltaTime) override;
     virtual void shutdown() override;
 
-    /** TODO: 添加 Body 创建与管理接口 */
+    virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) override;
 
 private:
     static void* allocate(size_t size) { return malloc(size); }

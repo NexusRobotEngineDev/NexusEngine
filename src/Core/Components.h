@@ -157,4 +157,16 @@ struct MeshComponent {
     }
 };
 
+/**
+ * @brief 刚体组件，用于与物理引擎（如 MuJoCo）进行状态同步
+ */
+struct RigidBodyComponent {
+    std::string bodyName;
+
+    template<class Archive>
+    void serialize(Archive& ar) {
+        ar(bodyName);
+    }
+};
+
 } // namespace Nexus
