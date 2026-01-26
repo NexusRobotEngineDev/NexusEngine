@@ -88,34 +88,24 @@ uint32_t SDL_Window_Wrapper::getWindowID() const {
 void SDL_Window_Wrapper::onEvent(const void* eventPtr) {
     const SDL_Event* event = static_cast<const SDL_Event*>(eventPtr);
 
-    if (event->type == SDL_EVENT_KEY_DOWN || event->type == SDL_EVENT_KEY_UP) {
-        NX_CORE_INFO("SDL_Window {} Event: Type={}, scancode={}, windowID={}",
-            (void*)this, (uint32_t)event->type, (uint32_t)event->key.scancode, event->key.windowID);
-    }
-
     if (event->type == SDL_EVENT_QUIT) {
         m_shouldClose = true;
     }
-
     if (event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event->window.windowID == getWindowID()) {
         m_shouldClose = true;
     }
-
     if (event->type == SDL_EVENT_WINDOW_RESIZED && event->window.windowID == getWindowID()) {
         m_width = event->window.data1;
         m_height = event->window.data2;
     }
 
     if (m_eventCallback) {
-        NX_CORE_INFO("SDL_Window {} Calling m_eventCallback now...", (void*)this);
         m_eventCallback(eventPtr);
-        NX_CORE_INFO("SDL_Window {} m_eventCallback execution finished.", (void*)this);
     } else {
         static uint32_t nullCount = 0;
         if (nullCount++ % 100 == 0) NX_CORE_WARN("SDL_Window {} NO CALLBACK REGISTERED!", (void*)this);
     }
 }
-
 void SDL_Window_Wrapper::setEventCallback(std::function<void(const void*)> callback) {
     NX_CORE_INFO("SDL_Window {}: Registering event callback", (void*)this);
     m_eventCallback = callback;
@@ -127,9 +117,7 @@ void SDL_Window_Wrapper::shutdown() {
         m_window = nullptr;
     }
 }
-
 bool SDL_Window_Wrapper::shouldClose() const {
     return m_shouldClose;
 }
-
 } // namespace Nexus

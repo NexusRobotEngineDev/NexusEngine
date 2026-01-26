@@ -41,11 +41,11 @@ Status VK_Buffer::create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::Me
 /**
  * @brief 将数据上传至缓冲区
  */
-Status VK_Buffer::uploadData(const void* data, uint64_t size) {
-    if (size > (uint64_t)m_size) return InvalidArgumentError("Data size exceeds buffer size");
+Status VK_Buffer::uploadData(const void* data, uint64_t size, uint64_t offset) {
+    if (offset + size > (uint64_t)m_size) return InvalidArgumentError("Data size + offset exceeds buffer size");
     void* mappedData = map();
     if (!mappedData) return InternalError("Failed to map buffer memory");
-    memcpy(mappedData, data, (size_t)size);
+    memcpy((uint8_t*)mappedData + offset, data, (size_t)size);
     unmap();
     return OkStatus();
 }

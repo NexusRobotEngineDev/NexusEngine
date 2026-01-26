@@ -15,6 +15,7 @@ public:
     virtual ~MuJoCo_PhysicsSystem() override;
 
     virtual Status initialize() override;
+    virtual Status loadModel(const std::string& path) override;
     virtual void update(float deltaTime) override;
     virtual void shutdown() override;
 

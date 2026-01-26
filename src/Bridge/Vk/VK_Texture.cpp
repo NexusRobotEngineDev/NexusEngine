@@ -33,22 +33,32 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     imageInfo.sharingMode = vk::SharingMode::eExclusive;
     imageInfo.samples = vk::SampleCountFlagBits::e1;
 
-    m_image = device.createImage(imageInfo).value;
+    auto imgResult = device.createImage(imageInfo);
+    if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create texture image");
+    m_image = imgResult.value;
 
     vk::MemoryRequirements memRequirements = device.getImageMemoryRequirements(m_image);
     vk::MemoryAllocateInfo allocInfo(memRequirements.size, m_context->findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal));
-    m_memory = device.allocateMemory(allocInfo).value;
+    auto memResult = device.allocateMemory(allocInfo);
+    if (memResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate texture memory");
+    m_memory = memResult.value;
     (void)device.bindImageMemory(m_image, m_memory, 0);
 
-    vk::BufferCreateInfo stagingBufferInfo({}, imageData.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc);
-    vk::Buffer stagingBuffer = device.createBuffer(stagingBufferInfo).value;
+    vk::BufferCreateInfo stagingBufferInfo({}, imageData.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive);
+    auto stagingResult = device.createBuffer(stagingBufferInfo);
+    if (stagingResult.result != vk::Result::eSuccess) return InternalError("Failed to create staging buffer");
+    vk::Buffer stagingBuffer = stagingResult.value;
 
     vk::MemoryRequirements stagingMemReq = device.getBufferMemoryRequirements(stagingBuffer);
     vk::MemoryAllocateInfo stagingAllocInfo(stagingMemReq.size, m_context->findMemoryType(stagingMemReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-    vk::DeviceMemory stagingMemory = device.allocateMemory(stagingAllocInfo).value;
+    auto stageMemResult = device.allocateMemory(stagingAllocInfo);
+    if (stageMemResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate staging memory");
+    vk::DeviceMemory stagingMemory = stageMemResult.value;
     (void)device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
 
-    void* data = device.mapMemory(stagingMemory, 0, imageData.pixels.size()).value;
+    auto mapResult = device.mapMemory(stagingMemory, 0, imageData.pixels.size());
+    if (mapResult.result != vk::Result::eSuccess) return InternalError("Failed to map staging memory");
+    void* data = mapResult.value;
     memcpy(data, imageData.pixels.data(), imageData.pixels.size());
     device.unmapMemory(stagingMemory);
 
@@ -69,7 +79,9 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    m_view = device.createImageView(viewInfo).value;
+    auto viewResult = device.createImageView(viewInfo);
+    if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create texture view");
+    m_view = viewResult.value;
 
     m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
     return createSampler();
@@ -83,12 +95,18 @@ Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format,
     vk::Format vkFormat = (format == TextureFormat::BGRA8_UNORM) ? vk::Format::eB8G8R8A8Unorm : vk::Format::eR8G8B8A8Unorm;
     vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vkFormat, {m_width, m_height, 1}, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
     if (usage == TextureUsage::Attachment) imageInfo.usage |= vk::ImageUsageFlagBits::eColorAttachment;
-    m_image = device.createImage(imageInfo).value;
+    auto imgResult = device.createImage(imageInfo);
+    if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create attachment image");
+    m_image = imgResult.value;
     vk::MemoryRequirements memReq = device.getImageMemoryRequirements(m_image);
-    m_memory = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)}).value;
+    auto memResult = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)});
+    if (memResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate attachment memory");
+    m_memory = memResult.value;
     (void)device.bindImageMemory(m_image, m_memory, 0);
     vk::ImageViewCreateInfo viewInfo({}, m_image, vk::ImageViewType::e2D, vkFormat, {}, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
-    m_view = device.createImageView(viewInfo).value;
+    auto viewResult = device.createImageView(viewInfo);
+    if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create attachment view");
+    m_view = viewResult.value;
     if (m_context->getBindlessManager()) m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
     return createSampler();
 }
@@ -108,7 +126,9 @@ Status VK_Texture::createSampler() {
     samplerInfo.compareOp = vk::CompareOp::eAlways;
     samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
 
-    m_sampler = m_context->getDevice().createSampler(samplerInfo).value;
+    auto samplerResult = m_context->getDevice().createSampler(samplerInfo);
+    if (samplerResult.result != vk::Result::eSuccess) return InternalError("Failed to create sampler");
+    m_sampler = samplerResult.value;
 
     m_bindlessSamplerIndex = m_context->getBindlessManager()->registerSampler(m_sampler);
 

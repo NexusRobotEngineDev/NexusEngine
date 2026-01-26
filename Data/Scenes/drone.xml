@@ -1,0 +1,36 @@
+<mujoco model="drone">
+    <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+    <option timestep="0.01" gravity="0 0 -9.81"/>
+    
+    <asset>
+        <material name="body_mat" rgba="0.2 0.2 0.2 1"/>
+        <material name="prop_mat" rgba="0.8 0.1 0.1 1"/>
+    </asset>
+
+    <worldbody>
+        <light pos="0 0 5" dir="0 0 -1" directional="true"/>
+        <geom name="floor" type="plane" size="5 5 0.1" rgba="0.8 0.9 0.8 1"/>
+
+        <body name="drone_body" pos="0 0 1">
+            <joint type="free"/>
+            <geom type="box" size="0.2 0.2 0.05" mass="1.0" material="body_mat"/>
+            
+            <!-- Motor 1 -->
+            <body name="motor1" pos="0.2 0.2 0.05">
+                <geom type="cylinder" size="0.1 0.01" mass="0.05" material="prop_mat" />
+            </body>
+            <!-- Motor 2 -->
+            <body name="motor2" pos="-0.2 -0.2 0.05">
+                <geom type="cylinder" size="0.1 0.01" mass="0.05" material="prop_mat" />
+            </body>
+            <!-- Motor 3 -->
+            <body name="motor3" pos="0.2 -0.2 0.05">
+                <geom type="cylinder" size="0.1 0.01" mass="0.05" material="prop_mat" />
+            </body>
+            <!-- Motor 4 -->
+            <body name="motor4" pos="-0.2 0.2 0.05">
+                <geom type="cylinder" size="0.1 0.01" mass="0.05" material="prop_mat" />
+            </body>
+        </body>
+    </worldbody>
+</mujoco>

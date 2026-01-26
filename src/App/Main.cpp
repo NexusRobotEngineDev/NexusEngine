@@ -18,6 +18,8 @@
 #include "Core/Scene.h"
 #include "Core/HierarchySystem.h"
 #include "Core/SceneSerializer.h"
+#include "Core/ModelLoader.h"
+#include "Core/TextureManager.h"
 
 using namespace Nexus;
 using namespace Nexus::Core;
@@ -39,6 +41,7 @@ std::unique_ptr<EditorUIManager> g_editorUIManager;
 #endif
 
 std::unique_ptr<Scene> g_scene;
+std::unique_ptr<TextureManager> g_textureManager;
 
 struct Position { float x, y; };
 
@@ -128,6 +131,8 @@ Status InitializeEngine(const EngineConfig& config) {
     g_editorUIManager = std::make_unique<EditorUIManager>();
     g_editorUIManager->initialize(g_renderer->getBridgeRenderer()->getUIBridge());
     g_editorUIManager->loadLayout("Data/UI/editor_layout.json");
+
+    g_textureManager = std::make_unique<TextureManager>(vkContext);
 #endif
 
     g_scene = std::make_unique<Scene>("MainScene");
@@ -138,9 +143,15 @@ Status InitializeEngine(const EngineConfig& config) {
         camera.getComponent<TransformComponent>().position = {0.0f, 0.0f, 2.0f};
         camera.addComponent<CameraComponent>();
 
-        Entity box = g_scene->createEntity("DefaultBox");
-        box.getComponent<TransformComponent>().position = {0.0f, 0.0f, 0.0f};
-        box.addComponent<MeshComponent>(g_renderer->getCubeMeshComponent());
+#if ENABLE_VULKAN
+        if (g_renderer && g_textureManager) {
+            Entity droneRoot = ModelLoader::loadModel(g_textureManager.get(), g_scene.get(), g_renderer->getMeshManager(), "Data/Models/drone.glb");
+            if (droneRoot.isValid()) {
+                auto& transform = droneRoot.getComponent<TransformComponent>();
+                transform.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
+            }
+        }
+#endif
     } else {
         bool cameraPosFixed = false;
         auto& registry = g_scene->getRegistry();
@@ -190,6 +201,10 @@ Status InitializeEngine(const EngineConfig& config) {
         delete g_physicsSystem;
         g_physicsSystem = nullptr;
     } else {
+        auto loadStatus = g_physicsSystem->loadModel("Data/Scenes/drone.xml");
+        if (!loadStatus.ok()) {
+            NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
+        }
         g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem);
         g_physicsThread->startThread();
     }
@@ -222,6 +237,7 @@ void ShutdownEngine() {
     g_editorUIManager.reset();
     g_renderer.reset();
     g_swapchain.reset();
+    g_textureManager.reset();
 #endif
 
     if (g_context) {

@@ -32,6 +32,9 @@ public:
     vk::DescriptorSetLayout getLayout() const { return m_layout; }
     vk::DescriptorSet getSet() const { return m_set; }
 
+    static constexpr uint32_t MAX_TEXTURES = 1024;
+    static constexpr uint32_t MAX_SAMPLERS = 64;
+
 private:
     vk::Device m_device;
     vk::DescriptorPool m_pool;
@@ -40,9 +43,6 @@ private:
 
     uint32_t m_nextTextureIndex = 0;
     uint32_t m_nextSamplerIndex = 0;
-
-    static constexpr uint32_t MAX_TEXTURES = 1024;
-    static constexpr uint32_t MAX_SAMPLERS = 64;
 };
 
 } // namespace Nexus

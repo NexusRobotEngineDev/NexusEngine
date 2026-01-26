@@ -97,4 +97,10 @@ StatusOr<ImageData> ResourceLoader::loadImage(const std::string& path) {
     return reader.read(binaryRes.value());
 }
 
+StatusOr<ImageData> ResourceLoader::loadImageFromMemory(const uint8_t* data, size_t size) {
+    std::vector<uint8_t> buffer(data, data + size);
+    STBImageReader reader;
+    return reader.read(buffer);
+}
+
 } // namespace Nexus

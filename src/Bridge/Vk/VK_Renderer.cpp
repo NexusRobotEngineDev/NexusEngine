@@ -73,6 +73,12 @@ Status VK_Renderer::initialize() {
         };
     }
 
+    ImageData whiteData;
+    whiteData.width = 1; whiteData.height = 1; whiteData.channels = 4;
+    whiteData.pixels = { 255, 255, 255, 255 };
+    m_whiteTexture = std::make_unique<VK_Texture>(m_context);
+    NX_RETURN_IF_ERROR(m_whiteTexture->create(whiteData, TextureUsage::Sampled));
+
     m_testTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
@@ -135,10 +141,10 @@ Status VK_Renderer::createGraphicsPipeline() {
 
     vk::VertexInputBindingDescription bindingDescription;
     bindingDescription.binding = 0;
-    bindingDescription.stride = sizeof(float) * 5;
+    bindingDescription.stride = sizeof(float) * 8;
     bindingDescription.inputRate = vk::VertexInputRate::eVertex;
 
-    std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions;
+    std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions;
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
     attributeDescriptions[0].format = vk::Format::eR32G32B32Sfloat;
@@ -148,6 +154,11 @@ Status VK_Renderer::createGraphicsPipeline() {
     attributeDescriptions[1].location = 1;
     attributeDescriptions[1].format = vk::Format::eR32G32Sfloat;
     attributeDescriptions[1].offset = sizeof(float) * 3;
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = vk::Format::eR32G32B32Sfloat;
+    attributeDescriptions[2].offset = sizeof(float) * 5;
 
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
     vertexInputInfo.vertexBindingDescriptionCount = 1;
@@ -168,16 +179,18 @@ Status VK_Renderer::createGraphicsPipeline() {
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
 
-    vk::PipelineDepthStencilStateCreateInfo depthStencil;
-    depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = vk::CompareOp::eLess;
-    depthStencil.depthBoundsTestEnable = VK_FALSE;
-    depthStencil.stencilTestEnable = VK_FALSE;
+    vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
+    depthStencilState.depthTestEnable = VK_TRUE;
+    depthStencilState.depthWriteEnable = VK_TRUE;
+    depthStencilState.depthCompareOp = vk::CompareOp::eLess;
+    depthStencilState.depthBoundsTestEnable = VK_FALSE;
+    depthStencilState.stencilTestEnable = VK_FALSE;
+    depthStencilState.minDepthBounds = 0.0f;
+    depthStencilState.maxDepthBounds = 1.0f;
 
     vk::PipelineMultisampleStateCreateInfo multisampling;
     multisampling.sampleShadingEnable = VK_FALSE;
@@ -227,15 +240,15 @@ Status VK_Renderer::createGraphicsPipeline() {
 
     NX_CORE_INFO("Pipeline Rendering Formats: Color={}, Depth={}", vk::to_string(colorAttachmentFormat), vk::to_string(depthAttachmentFormat));
 
-    VkPipelineRenderingCreateInfo renderingCreateInfo{};
-    renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    VkFormat cFmt = static_cast<VkFormat>(colorAttachmentFormat);
+    vk::PipelineRenderingCreateInfo renderingCreateInfo;
     renderingCreateInfo.colorAttachmentCount = 1;
-    renderingCreateInfo.pColorAttachmentFormats = &cFmt;
-    renderingCreateInfo.depthAttachmentFormat = static_cast<VkFormat>(depthAttachmentFormat);
+    renderingCreateInfo.pColorAttachmentFormats = &colorAttachmentFormat;
+    renderingCreateInfo.depthAttachmentFormat = depthAttachmentFormat;
+    renderingCreateInfo.stencilAttachmentFormat = vk::Format::eUndefined;
     renderingCreateInfo.viewMask = 0;
 
     vk::GraphicsPipelineCreateInfo pipelineInfo;
+    pipelineInfo.pNext = &renderingCreateInfo;
     pipelineInfo.stageCount = 2;
     pipelineInfo.pStages = shaderStages;
     pipelineInfo.pVertexInputState = &vertexInputInfo;
@@ -243,14 +256,13 @@ Status VK_Renderer::createGraphicsPipeline() {
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pDepthStencilState = &depthStencilState;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = m_pipelineLayout;
-    pipelineInfo.renderPass = nullptr;
+    pipelineInfo.renderPass = VK_NULL_HANDLE;
     pipelineInfo.subpass = 0;
 
-    pipelineInfo.pNext = &renderingCreateInfo;
     auto result = m_device.createGraphicsPipeline(nullptr, pipelineInfo);
     if (result.result != vk::Result::eSuccess) {
         return InternalError("Failed to create graphics pipeline");
@@ -499,10 +511,22 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                 }
 
                 BindlessConstants constants = {};
-                if (m_testTexture) {
-                    constants.textureIndex = m_testTexture->getBindlessTextureIndex();
-                    constants.samplerIndex = m_testTexture->getBindlessSamplerIndex();
+                if (mesh.albedoTexture < VK_BindlessManager::MAX_TEXTURES) {
+                    constants.textureIndex = mesh.albedoTexture;
+                } else {
+                    constants.textureIndex = m_whiteTexture->getBindlessTextureIndex();
                 }
+
+                if (mesh.samplerIndex < VK_BindlessManager::MAX_SAMPLERS) {
+                    constants.samplerIndex = mesh.samplerIndex;
+                } else {
+                    constants.samplerIndex = m_whiteTexture->getBindlessSamplerIndex();
+                }
+
+                constants.albedoFactor = mesh.albedoFactor;
+                constants.metallicFactor = mesh.metallicFactor;
+                constants.roughnessFactor = mesh.roughnessFactor;
+
                 constants.mvp = mvp;
                 commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
 
@@ -541,7 +565,11 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 }
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
-    if (width == 0 || height == 0) return OkStatus();
+    if (width == 0 || height == 0) {
+        NX_CORE_INFO("VK_Renderer: Window minimized (size 0), skipping resize.");
+        return OkStatus();
+    }
+
     NX_CORE_INFO("VK_Renderer: Window resized to {}x{}", width, height);
 
     NX_CORE_INFO("VK_Renderer: Waiting for device idle...");
@@ -564,7 +592,7 @@ void VK_Renderer::updateWindowSize(int width, int height) {
 }
 Status VK_Renderer::renderFrame(Registry* registry) {
 #ifdef ENABLE_RMLUI
-    if (m_uiBridge) {
+    if (m_uiBridge && m_swapchain->getExtent().width > 0 && m_swapchain->getExtent().height > 0) {
         SDL_Event evt;
         while (m_eventQueue.pop(evt)) {
             m_uiBridge->processSdlEvent(evt);

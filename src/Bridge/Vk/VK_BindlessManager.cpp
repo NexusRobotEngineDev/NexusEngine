@@ -21,7 +21,10 @@ Status VK_BindlessManager::initialize() {
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
 
-    m_pool = m_device.createDescriptorPool(poolInfo).value;
+    auto poolRes = m_device.createDescriptorPool(poolInfo);
+    if (poolRes.result != vk::Result::eSuccess) return InternalError("Failed to create bindless descriptor pool");
+    m_pool = poolRes.value;
+    NX_CORE_INFO("Bindless Descriptor Pool created successfully.");
 
     std::vector<vk::DescriptorSetLayoutBinding> bindings(2);
     bindings[0].binding = 0;
@@ -49,10 +52,16 @@ Status VK_BindlessManager::initialize() {
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    m_layout = m_device.createDescriptorSetLayout(layoutInfo).value;
+    auto layoutRes = m_device.createDescriptorSetLayout(layoutInfo);
+    if (layoutRes.result != vk::Result::eSuccess) return InternalError("Failed to create bindless descriptor set layout");
+    m_layout = layoutRes.value;
+    NX_CORE_INFO("Bindless Descriptor Set Layout created successfully.");
 
     vk::DescriptorSetAllocateInfo allocInfo(m_pool, 1, &m_layout);
-    m_set = m_device.allocateDescriptorSets(allocInfo).value[0];
+    auto setRes = m_device.allocateDescriptorSets(allocInfo);
+    if (setRes.result != vk::Result::eSuccess) return InternalError("Failed to allocate bindless descriptor set");
+    m_set = setRes.value[0];
+    NX_CORE_INFO("Bindless Descriptor Set allocated successfully.");
 
     return OkStatus();
 }
@@ -84,6 +93,7 @@ uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
     write.pImageInfo = &imageInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
+    NX_CORE_INFO("[Bindless] Registered Texture View: {}, Index: {}", (void*)view, index);
 
     return index;
 }
@@ -103,6 +113,7 @@ uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
     write.pImageInfo = &samplerInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
+    NX_CORE_INFO("[Bindless] Registered Sampler: {}, Index: {}", (void*)sampler, index);
 
     return index;
 }
