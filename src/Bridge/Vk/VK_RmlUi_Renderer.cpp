@@ -27,7 +27,14 @@ VK_RmlUi_Renderer::VK_RmlUi_Renderer(IContext* context, IRenderer* renderer)
 }
 
 VK_RmlUi_Renderer::~VK_RmlUi_Renderer() {
-    pumpDeferredDestruction();
+    for (int i = 0; i < 3; ++i) {
+        for (auto geo : m_geometryDeletionQueue[i]) delete geo;
+        for (auto tex : m_textureDeletionQueue[i]) delete tex;
+        m_geometryDeletionQueue[i].clear();
+        m_bufferDeletionQueue[i].clear();
+        m_textureDeletionQueue[i].clear();
+    }
+
     auto vkCtx = static_cast<VK_Context*>(m_context);
     if (m_pipeline) vkCtx->getDevice().destroyPipeline(m_pipeline);
     if (m_pipelineLayout) vkCtx->getDevice().destroyPipelineLayout(m_pipelineLayout);
@@ -199,7 +206,7 @@ void VK_RmlUi_Renderer::RenderGeometry(Rml::CompiledGeometryHandle geometry_hand
 void VK_RmlUi_Renderer::ReleaseGeometry(Rml::CompiledGeometryHandle geometry_handle) {
     if (geometry_handle) {
          RmlGeometry* geometry = reinterpret_cast<RmlGeometry*>(geometry_handle);
-         m_deferredGeometryDestruction.push_back(geometry);
+         m_geometryDeletionQueue[m_currentFrameIndex].push_back(geometry);
     }
 }
 
@@ -209,6 +216,9 @@ Rml::TextureHandle VK_RmlUi_Renderer::LoadTexture(Rml::Vector2i& texture_dimensi
 }
 
 Rml::TextureHandle VK_RmlUi_Renderer::GenerateTexture(Rml::Span<const Rml::byte> source, Rml::Vector2i source_dimensions) {
+    NX_CORE_INFO("VK_RmlUi_Renderer::GenerateTexture - Size: {}x{}, Data Size: {} bytes",
+                 source_dimensions.x, source_dimensions.y, source.size());
+
     ImageData data;
     data.width = source_dimensions.x;
     data.height = source_dimensions.y;
@@ -216,13 +226,15 @@ Rml::TextureHandle VK_RmlUi_Renderer::GenerateTexture(Rml::Span<const Rml::byte>
     data.pixels.assign(source.data(), source.data() + source.size());
 
     std::unique_ptr<ITexture> tex = m_context->createTexture(data, TextureUsage::Sampled);
+
+    NX_CORE_INFO("VK_RmlUi_Renderer::GenerateTexture - Generated handle: {}", (void*)tex.get());
     return reinterpret_cast<Rml::TextureHandle>(tex.release());
 }
 
 void VK_RmlUi_Renderer::ReleaseTexture(Rml::TextureHandle texture_handle) {
     if (texture_handle) {
         ITexture* tex = reinterpret_cast<ITexture*>(texture_handle);
-        delete tex;
+        m_textureDeletionQueue[m_currentFrameIndex].push_back(tex);
     }
 }
 
@@ -241,10 +253,17 @@ void VK_RmlUi_Renderer::SetTransform(const Rml::Matrix4f* transform) {
 }
 
 void VK_RmlUi_Renderer::pumpDeferredDestruction() {
-    for (auto geo : m_deferredGeometryDestruction) {
+    m_currentFrameIndex = (m_currentFrameIndex + 1) % 3;
+
+    for (auto geo : m_geometryDeletionQueue[m_currentFrameIndex]) {
         delete geo;
     }
-    m_deferredGeometryDestruction.clear();
+    for (auto tex : m_textureDeletionQueue[m_currentFrameIndex]) {
+        delete tex;
+    }
+    m_geometryDeletionQueue[m_currentFrameIndex].clear();
+    m_bufferDeletionQueue[m_currentFrameIndex].clear();
+    m_textureDeletionQueue[m_currentFrameIndex].clear();
 }
 
 } // namespace Nexus

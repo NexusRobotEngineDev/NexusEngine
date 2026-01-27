@@ -52,7 +52,10 @@ private:
     bool m_scissorEnabled = false;
     vk::Rect2D m_scissorRect;
 
-    std::vector<struct RmlGeometry*> m_deferredGeometryDestruction;
+    std::vector<struct RmlGeometry*> m_geometryDeletionQueue[3];
+    std::vector<std::unique_ptr<IBuffer>> m_bufferDeletionQueue[3];
+    std::vector<ITexture*> m_textureDeletionQueue[3];
+    int m_currentFrameIndex = 0;
 };
 
 } // namespace Nexus

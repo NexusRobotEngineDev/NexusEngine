@@ -44,7 +44,12 @@ std::unique_ptr<EditorUIManager> g_editorUIManager;
 
 std::unique_ptr<Scene> g_scene;
 std::unique_ptr<TextureManager> g_textureManager;
+#include <mutex>
+#include <vector>
 std::unique_ptr<RosBridgeSystem> g_rosBridge;
+
+std::mutex g_eventMutex;
+std::vector<SDL_Event> g_eventQueue;
 
 struct Position { float x, y; };
 
@@ -58,15 +63,26 @@ struct InputState {
 void OnWindowEvent(const void* event) {
     const SDL_Event* sdlEvent = static_cast<const SDL_Event*>(event);
 
-    if (g_renderer) {
-        g_renderer->processEvent(event);
+    if (sdlEvent->type == SDL_EVENT_TEXT_INPUT && sdlEvent->text.text) {
+        if (g_renderer && g_renderer->getBridgeRenderer() && g_renderer->getBridgeRenderer()->getUIBridge()) {
+            g_renderer->getBridgeRenderer()->getUIBridge()->injectTextInput(std::string(sdlEvent->text.text));
+        }
     }
 
-    switch (sdlEvent->type) {
+    std::lock_guard<std::mutex> lock(g_eventMutex);
+    g_eventQueue.push_back(*sdlEvent);
+}
+
+void ProcessEventSync(const SDL_Event& sdlEvent) {
+    if (g_renderer) {
+        g_renderer->processEvent(&sdlEvent);
+    }
+
+    switch (sdlEvent.type) {
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP: {
-            bool pressed = (sdlEvent->type == SDL_EVENT_KEY_DOWN);
-            switch (sdlEvent->key.scancode) {
+            bool pressed = (sdlEvent.type == SDL_EVENT_KEY_DOWN);
+            switch (sdlEvent.key.scancode) {
                 case SDL_SCANCODE_W: g_input.w = pressed; break;
                 case SDL_SCANCODE_S: g_input.s = pressed; break;
                 case SDL_SCANCODE_A: g_input.a = pressed; break;
@@ -79,8 +95,8 @@ void OnWindowEvent(const void* event) {
         }
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
         case SDL_EVENT_MOUSE_BUTTON_UP: {
-            if (sdlEvent->button.button == SDL_BUTTON_RIGHT) {
-                bool isDown = (sdlEvent->type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+            if (sdlEvent.button.button == SDL_BUTTON_RIGHT) {
+                bool isDown = (sdlEvent.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
                 g_input.mouseRightDown = isDown;
                 if (g_window) {
                     SDL_Window* sdlWin = (SDL_Window*)g_window->getNativeHandle();
@@ -93,8 +109,8 @@ void OnWindowEvent(const void* event) {
         }
         case SDL_EVENT_MOUSE_MOTION: {
             if (g_input.mouseRightDown) {
-                g_input.mouseDeltaX = g_input.mouseDeltaX + (float)sdlEvent->motion.xrel;
-                g_input.mouseDeltaY = g_input.mouseDeltaY + (float)sdlEvent->motion.yrel;
+                g_input.mouseDeltaX = g_input.mouseDeltaX + (float)sdlEvent.motion.xrel;
+                g_input.mouseDeltaY = g_input.mouseDeltaY + (float)sdlEvent.motion.yrel;
             }
             break;
         }
@@ -112,6 +128,15 @@ Status InitializeEngine(const EngineConfig& config) {
     g_windowThread->startThread();
     NX_RETURN_IF_ERROR(g_windowThread->createWindowAsync("Nexus Engine", 1280, 720, g_window));
     g_window->setEventCallback(OnWindowEvent);
+
+#if ENABLE_SDL
+    if (g_window) {
+        SDL_Window* sdlWin = (SDL_Window*)g_window->getNativeHandle();
+        if (sdlWin) {
+            SDL_StartTextInput(sdlWin);
+        }
+    }
+#endif
 
     g_context = CreateContext(config);
     if (!g_context) return InternalError("Context creation failed");
@@ -273,7 +298,19 @@ void RunMainLoop() {
     uint32_t lastWidth = 1280;
     uint32_t lastHeight = 720;
 
+    std::vector<SDL_Event> localEvents;
     while (!g_quit) {
+
+        {
+            std::lock_guard<std::mutex> lock(g_eventMutex);
+            localEvents = std::move(g_eventQueue);
+            g_eventQueue.clear();
+        }
+
+        for (const auto& ev : localEvents) {
+            ProcessEventSync(ev);
+        }
+
         if (g_window->shouldClose()) {
             g_quit = true;
             break;
@@ -353,7 +390,7 @@ void RunMainLoop() {
                 camera.up[1] = upY;
                 camera.up[2] = upZ;
 
-                if (g_input.w || g_input.s || g_input.a || g_input.d || g_input.q || g_input.e) {
+                if (g_input.mouseRightDown && (g_input.w || g_input.s || g_input.a || g_input.d || g_input.q || g_input.e)) {
 
                     if (g_input.w) {
                         transform.position[0] += forwardX * speed;

@@ -104,3 +104,14 @@ button {
 button:hover {
     background-color: #4a4a7a;
 }
+
+/* Tree View */
+.tree-node { display: block; padding-left: 10dp; cursor: pointer; }
+.tree-node:hover { background-color: #363658; }
+.tree-node.selected { background-color: #4a4a7a; color: #ffffff; font-weight: bold; }
+
+/* Property Fields */
+.prop-row { display: flex; flex-direction: row; justify-content: space-between; margin-bottom: 4dp; }
+.prop-label { width: 40%; color: #aaaacc; }
+.prop-value { width: 55%; background-color: #1e1e2e; border: 1dp #4a4a6a; color: #ffffff; padding: 2dp; }
+

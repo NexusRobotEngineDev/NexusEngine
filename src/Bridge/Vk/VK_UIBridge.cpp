@@ -59,8 +59,34 @@ void VK_UIBridge::shutdown() {
     m_systemInterface.reset();
 }
 
+void VK_UIBridge::injectTextInput(const std::string& text) {
+    if (text.empty()) return;
+    std::lock_guard<std::mutex> lock(m_textInputMutex);
+    m_textInputQueue.push_back(text);
+}
+
+void VK_UIBridge::flushThreadSafeEvents() {
+    std::vector<std::string> localQueue;
+    {
+        std::lock_guard<std::mutex> lock(m_textInputMutex);
+        if (m_textInputQueue.empty()) return;
+        localQueue = std::move(m_textInputQueue);
+        m_textInputQueue.clear();
+    }
+
+    if (m_rmlContext) {
+        for (const auto& text : localQueue) {
+            if (auto focus = m_rmlContext->GetFocusElement()) {
+                NX_CORE_INFO("VK_UIBridge - Injecting TextInput: '{}'", text);
+                m_rmlContext->ProcessTextInput(text);
+            }
+        }
+    }
+}
+
 void VK_UIBridge::update() {
     if (m_rmlContext) {
+        flushThreadSafeEvents();
         m_rmlContext->Update();
     }
     if (m_renderInterface) {
@@ -87,19 +113,74 @@ Rml::ElementDocument* VK_UIBridge::loadDocument(const std::string& documentPath)
 }
 
 #ifdef ENABLE_SDL
+#include <RmlUi/Core/Input.h>
+
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
+
+static Rml::Input::KeyIdentifier translateKey(SDL_Scancode scancode) {
+    switch (scancode) {
+        case SDL_SCANCODE_BACKSPACE: return Rml::Input::KI_BACK;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER: return Rml::Input::KI_RETURN;
+        case SDL_SCANCODE_LEFT: return Rml::Input::KI_LEFT;
+        case SDL_SCANCODE_RIGHT: return Rml::Input::KI_RIGHT;
+        case SDL_SCANCODE_UP: return Rml::Input::KI_UP;
+        case SDL_SCANCODE_DOWN: return Rml::Input::KI_DOWN;
+        case SDL_SCANCODE_DELETE: return Rml::Input::KI_DELETE;
+        case SDL_SCANCODE_HOME: return Rml::Input::KI_HOME;
+        case SDL_SCANCODE_END: return Rml::Input::KI_END;
+        case SDL_SCANCODE_ESCAPE: return Rml::Input::KI_ESCAPE;
+        case SDL_SCANCODE_TAB: return Rml::Input::KI_TAB;
+        case SDL_SCANCODE_LSHIFT:
+        case SDL_SCANCODE_RSHIFT: return Rml::Input::KI_LSHIFT;
+        case SDL_SCANCODE_LCTRL:
+        case SDL_SCANCODE_RCTRL: return Rml::Input::KI_LCONTROL;
+        default: return Rml::Input::KI_UNKNOWN;
+    }
+}
+
 void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
     if (!m_rmlContext) return;
 
+    int keyModifier = 0;
+    SDL_Keymod mod = SDL_GetModState();
+    if (mod & SDL_KMOD_SHIFT) keyModifier |= Rml::Input::KM_SHIFT;
+    if (mod & SDL_KMOD_CTRL)  keyModifier |= Rml::Input::KM_CTRL;
+    if (mod & SDL_KMOD_ALT)   keyModifier |= Rml::Input::KM_ALT;
+
     switch(event.type) {
         case SDL_EVENT_MOUSE_MOTION:
-            m_rmlContext->ProcessMouseMove((int)event.motion.x, (int)event.motion.y, 0);
+            m_rmlContext->ProcessMouseMove((int)event.motion.x, (int)event.motion.y, keyModifier);
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            m_rmlContext->ProcessMouseButtonDown(event.button.button - 1, 0);
+            if (event.button.button == SDL_BUTTON_RIGHT) {
+                if (auto focus = m_rmlContext->GetFocusElement()) {
+                    focus->Blur();
+                }
+            }
+            m_rmlContext->ProcessMouseButtonDown(event.button.button - 1, keyModifier);
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            m_rmlContext->ProcessMouseButtonUp(event.button.button - 1, 0);
+            m_rmlContext->ProcessMouseButtonUp(event.button.button - 1, keyModifier);
             break;
+        case SDL_EVENT_KEY_DOWN: {
+            Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
+            if (key != Rml::Input::KI_UNKNOWN) {
+                m_rmlContext->ProcessKeyDown(key, keyModifier);
+            }
+            break;
+        }
+        case SDL_EVENT_KEY_UP: {
+            Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
+            if (key != Rml::Input::KI_UNKNOWN) {
+                m_rmlContext->ProcessKeyUp(key, keyModifier);
+            }
+            break;
+        }
+        case SDL_EVENT_TEXT_INPUT: {
+            break;
+        }
     }
 }
 #endif
