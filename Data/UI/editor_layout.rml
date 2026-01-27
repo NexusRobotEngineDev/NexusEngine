@@ -12,7 +12,9 @@
                     <span class="title-text">场景层级</span>
                 </div>
                 <div class="panel-content">
-                    <p>Scene Hierarchy</p>
+                    <div id="hierarchy-tree">
+                        <!-- C++ 会在这里动态插入 .tree-node -->
+                    </div>
                 </div>
             </div>
         </div>
@@ -27,8 +29,21 @@
                 <div class="title-bar" drag="drag">
                     <span class="title-text">属性面板</span>
                 </div>
-                <div class="panel-content">
-                    <p>Properties</p>
+                <div class="panel-content" id="properties-content">
+                    <h3 style="margin-bottom: 5dp; color:#ffffaa;">Transform</h3>
+                    <div class="prop-row">
+                        <span class="prop-label">Position X</span>
+                        <input id="prop-pos-x" type="text" class="prop-value" value="0.0"/>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Position Y</span>
+                        <input id="prop-pos-y" type="text" class="prop-value" value="0.0"/>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Position Z</span>
+                        <input id="prop-pos-z" type="text" class="prop-value" value="0.0"/>
+                    </div>
+                    <!-- 将来可以继续添加 Rotation, Scale -->
                 </div>
             </div>
         </div>

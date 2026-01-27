@@ -8,6 +8,8 @@
 #include "VK_RmlUi_Renderer.h"
 #include <memory>
 #include <string>
+#include <mutex>
+#include <vector>
 
 namespace Nexus {
 
@@ -59,7 +61,12 @@ public:
      */
     void onResize(int width, int height);
 
+    void injectTextInput(const std::string& text);
+    void flushThreadSafeEvents();
+
 private:
+    std::mutex m_textInputMutex;
+    std::vector<std::string> m_textInputQueue;
     IContext* m_context;
     IRenderer* m_renderer;
 

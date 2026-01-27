@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Panel.h"
+#include "../Bridge/Entity.h"
 #include <RmlUi/Core.h>
 #include <vector>
 #include <memory>
@@ -10,6 +11,7 @@
 namespace Nexus {
 
 class VK_UIBridge;
+class Scene;
 
 /**
  * @brief 编辑器 UI 管理器，负责面板的拖拽、吸附与布局持久化
@@ -45,6 +47,11 @@ public:
     void dockPanel(const std::string& panelId, const std::string& dockZoneId);
 
     /**
+     * @brief 逐帧更新 UI 状态，例如场景树与选中实体的属性
+     */
+    void update(Scene* scene);
+
+    /**
      * @brief 保存当前布局到 JSON 文件
      */
     bool saveLayout(const std::string& filePath);
@@ -57,7 +64,7 @@ public:
     void ProcessEvent(Rml::Event& event) override;
 
 private:
-    void setupDragListeners();
+    void setupEventListeners();
     Rml::Element* findDockZoneAtPosition(float x, float y);
 
     VK_UIBridge* m_uiBridge = nullptr;
@@ -68,6 +75,10 @@ private:
     Rml::Element* m_draggedElement = nullptr;
     float m_dragStartX = 0;
     float m_dragStartY = 0;
+
+    Entity m_selectedEntity{};
+    Scene* m_currentScene = nullptr;
+    double m_lastUpdateTime = 0.0;
 };
 
 } // namespace Nexus
