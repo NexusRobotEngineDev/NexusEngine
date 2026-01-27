@@ -12,8 +12,8 @@
                     <span class="title-text">场景层级</span>
                 </div>
                 <div class="panel-content">
-                    <div id="hierarchy-tree">
-                        <!-- C++ 会在这里动态插入 .tree-node -->
+                    <div id="hierarchy-tree" style="display: block;">
+                        <!-- C++ 会在这里动态插入 -->
                     </div>
                 </div>
             </div>
@@ -30,6 +30,18 @@
                     <span class="title-text">属性面板</span>
                 </div>
                 <div class="panel-content" id="properties-content">
+                    <div id="prop-entity-info" style="margin-bottom: 15dp; padding-bottom: 5dp; border-bottom: 1dp #4a4a6a;">
+                        <h3 style="margin-bottom: 5dp; color:#aaffaa;">Entity info</h3>
+                        <div class="prop-row">
+                            <span class="prop-label">ID</span>
+                            <span id="prop-entity-id" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffffff;">-</span>
+                        </div>
+                        <div class="prop-row">
+                            <span class="prop-label">Name</span>
+                            <span id="prop-entity-name" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffffff;">-</span>
+                        </div>
+                    </div>
+                    
                     <h3 style="margin-bottom: 5dp; color:#ffffaa;">Transform</h3>
                     <div class="prop-row">
                         <span class="prop-label">Position X</span>

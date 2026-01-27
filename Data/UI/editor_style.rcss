@@ -18,11 +18,13 @@ body {
 
 /* 侧边栏Dock区域 */
 .dock-zone {
+    display: flex;
+    flex-direction: column;
     min-width: 200dp;
     max-width: 400dp;
     background-color: #1e1e2ecc;
     border: 1dp #3a3a5a;
-    overflow: auto;
+    overflow: hidden;
 }
 
 .dock-zone.left {
@@ -39,6 +41,7 @@ body {
 .viewport-area {
     flex: 1;
     background-color: #00000000;
+    pointer-events: none;
 }
 
 /* 底部停靠栏 */
@@ -50,11 +53,14 @@ body {
 
 /* 可拖拽面板 */
 .panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
     background-color: #252538ee;
     border: 1dp #505080;
     margin: 4dp;
     padding: 0;
-    overflow: auto;
+    overflow: hidden;
 }
 
 .panel .title-bar {
@@ -75,7 +81,9 @@ body {
 }
 
 .panel .panel-content {
+    flex: 1;
     padding: 8dp;
+    overflow-y: auto;
 }
 
 /* 浮动窗口 (被拖拽时的状态) */
@@ -106,12 +114,24 @@ button:hover {
 }
 
 /* Tree View */
-.tree-node { display: block; padding-left: 10dp; cursor: pointer; }
-.tree-node:hover { background-color: #363658; }
-.tree-node.selected { background-color: #4a4a7a; color: #ffffff; font-weight: bold; }
+.tree-node { display: block; padding-left: 10dp; cursor: pointer; padding-top: 2dp; padding-bottom: 2dp; }
+.tree-node:hover { background-color: #3a3a60; }
+.tree-node.selected { background-color: #007acc; color: #ffffff; }
 
 /* Property Fields */
 .prop-row { display: flex; flex-direction: row; justify-content: space-between; margin-bottom: 4dp; }
 .prop-label { width: 40%; color: #aaaacc; }
 .prop-value { width: 55%; background-color: #1e1e2e; border: 1dp #4a4a6a; color: #ffffff; padding: 2dp; }
 
+/* Scrollbars */
+scrollbarvertical,
+scrollbarhorizontal,
+slidertrack,
+sliderbar,
+sliderarrowdec,
+sliderarrowinc {
+    width: 0dp;
+    height: 0dp;
+    display: none;
+    pointer-events: none;
+}
