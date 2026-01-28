@@ -362,10 +362,16 @@ void RunMainLoop() {
         }
 
         if (g_scene) {
+            static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+            auto now = std::chrono::high_resolution_clock::now();
+            float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
+            lastFrameTime = now;
+            if (deltaTime > 0.1f) deltaTime = 0.1f;
+
             auto& registry = g_scene->getRegistry();
             auto view = registry.view<CameraComponent, TransformComponent>();
-            float speed = 0.05f;
-            float sensitivity = 0.005f;
+            float speed = 5.0f * deltaTime;
+            float sensitivity = 0.5f * deltaTime;
 
             for (auto entity : view) {
                 auto& transform = registry.get<TransformComponent>(entity);
