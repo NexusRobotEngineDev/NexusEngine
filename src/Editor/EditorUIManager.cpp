@@ -149,25 +149,60 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
         }
     }
     else if (event.GetId() == Rml::EventId::Click) {
-        if (target->IsClassSet("tree-node")) {
-            auto entityIdStr = target->GetAttribute<Rml::String>("entity-id", "");
+        float mouseX = event.GetParameter("mouse_x", 0.0f);
+        float mouseY = event.GetParameter("mouse_y", 0.0f);
+
+        Rml::Element* clickedTreeNode = nullptr;
+
+        Rml::Element* node = target;
+        while (node) {
+            if (node->IsClassSet("tree-node")) {
+                clickedTreeNode = node;
+                break;
+            }
+            node = node->GetParentNode();
+        }
+
+        if (!clickedTreeNode && target->GetTagName() == "slidertrack") {
+            Rml::ElementList treeNodes;
+            m_editorDoc->GetElementsByClassName(treeNodes, "tree-node");
+            for (auto* tn : treeNodes) {
+                auto offset = tn->GetAbsoluteOffset(Rml::BoxArea::Border);
+                auto size = tn->GetBox().GetSize(Rml::BoxArea::Border);
+                if (mouseY >= offset.y && mouseY <= offset.y + size.y &&
+                    mouseX >= offset.x && mouseX <= offset.x + size.x) {
+                    clickedTreeNode = tn;
+                    break;
+                }
+            }
+        }
+
+        if (clickedTreeNode) {
+            auto entityIdStr = clickedTreeNode->GetAttribute<Rml::String>("entity-id", "");
             if (!entityIdStr.empty() && m_currentScene) {
                 uint32_t rawId = std::stoul(entityIdStr);
                 m_selectedEntity = Entity(static_cast<entt::entity>(rawId), &m_currentScene->getRegistry());
+                NX_CORE_INFO("EditorUIManager: Selected entity ID: {}", rawId);
             }
         }
     }
     else if (event.GetId() == Rml::EventId::Change) {
+        std::string targetId = target->GetId();
+        auto valStr = event.GetParameter<Rml::String>("value", "0.0");
+        NX_CORE_INFO("EditorUIManager: Change event fired for '{}' with value '{}'", targetId, valStr);
+
         if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {
             auto& transform = m_selectedEntity.getComponent<TransformComponent>();
-            auto valStr = event.GetParameter<Rml::String>("value", "0.0");
             try {
                 float val = std::stof(valStr);
-                std::string targetId = target->GetId();
                 if (targetId == "prop-pos-x") transform.position[0] = val;
                 else if (targetId == "prop-pos-y") transform.position[1] = val;
                 else if (targetId == "prop-pos-z") transform.position[2] = val;
-            } catch (...) {}
+            } catch (...) {
+                NX_CORE_WARN("EditorUIManager: Failed to parse float from '{}'", valStr);
+            }
+        } else {
+            NX_CORE_WARN("EditorUIManager: Change event but no valid selected entity!");
         }
     }
     else if (event.GetId() == Rml::EventId::Focus) {
@@ -175,6 +210,14 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
     }
     else if (event.GetId() == Rml::EventId::Blur) {
         target->SetClass("focused", false);
+    }
+    else if (event.GetId() == Rml::EventId::Keydown) {
+        if (target->GetTagName() == "input") {
+            auto key = (Rml::Input::KeyIdentifier)event.GetParameter<int>("key_identifier", 0);
+            if (key == Rml::Input::KI_RETURN || key == Rml::Input::KI_NUMPADENTER) {
+                target->Blur();
+            }
+        }
     }
 }
 
@@ -194,6 +237,7 @@ void EditorUIManager::setupEventListeners() {
     m_editorDoc->AddEventListener(Rml::EventId::Change, this, true);
     m_editorDoc->AddEventListener(Rml::EventId::Focus, this, true);
     m_editorDoc->AddEventListener(Rml::EventId::Blur, this, true);
+    m_editorDoc->AddEventListener(Rml::EventId::Keydown, this, true);
 }
 
 Rml::Element* EditorUIManager::findDockZoneAtPosition(float x, float y) {
@@ -287,20 +331,35 @@ bool EditorUIManager::loadLayout(const std::string& filePath) {
 }
 
 void EditorUIManager::update(Scene* scene) {
-    if (!scene || !m_editorDoc) return;
+    if (!scene) {
+        NX_CORE_WARN("EditorUIManager::update called with null scene!");
+        return;
+    }
+    if (!m_editorDoc) {
+        NX_CORE_WARN("EditorUIManager::update called but m_editorDoc is null!");
+        return;
+    }
     m_currentScene = scene;
 
-    static int tickCount = 0;
-    if (tickCount++ % 10 == 0) {
-        Rml::Element* treeParent = m_editorDoc->GetElementById("hierarchy-tree");
-        if (treeParent) {
+    Rml::Element* treeParent = m_editorDoc->GetElementById("hierarchy-tree");
+    if (treeParent) {
+        auto& registry = scene->getRegistry();
+        auto view = registry.view<TagComponent>();
+
+        int currentCount = 0;
+        for (auto ent : view) currentCount++;
+
+        static int lastCount = -1;
+        static uint32_t lastSelectedId = 0xFFFFFFFF;
+        uint32_t currentSelectedId = m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
+
+        if (currentCount != lastCount) {
             bool foundSelected = false;
             treeParent->SetInnerRML("");
-            auto& registry = scene->getRegistry();
-            auto view = registry.view<TagComponent>();
 
-            for (auto ent : view) {
+            auto appendEntity = [&](auto& self, entt::entity ent, int depth) -> void {
                 Entity entity(ent, &registry);
+                if (!entity.hasComponent<TagComponent>()) return;
                 auto& tag = entity.getComponent<TagComponent>();
 
                 auto nodePtr = m_editorDoc->CreateElement("div");
@@ -310,15 +369,81 @@ void EditorUIManager::update(Scene* scene) {
                     foundSelected = true;
                 }
 
+                if (depth > 0) {
+                    nodePtr->SetProperty("padding-left", std::to_string(10 + depth * 15) + "dp");
+                }
+
                 nodePtr->SetInnerRML(tag.name);
                 nodePtr->SetAttribute("entity-id", std::to_string(static_cast<uint32_t>(ent)));
                 nodePtr->AddEventListener(Rml::EventId::Click, this);
                 treeParent->AppendChild(std::move(nodePtr));
+
+                if (entity.hasComponent<HierarchyComponent>()) {
+                    auto& hc = entity.getComponent<HierarchyComponent>();
+                    for (auto child : hc.children) {
+                        if (registry.getInternal().valid(child)) {
+                            self(self, child, depth + 1);
+                        }
+                    }
+                }
+            };
+
+            for (auto ent : view) {
+                Entity entity(ent, &registry);
+                bool isRoot = true;
+                if (entity.hasComponent<HierarchyComponent>()) {
+                    isRoot = (entity.getComponent<HierarchyComponent>().parent == entt::null);
+                }
+                if (isRoot) {
+                    appendEntity(appendEntity, ent, 0);
+                }
             }
             if (!foundSelected) {
                 m_selectedEntity = {};
+                currentSelectedId = 0xFFFFFFFF;
             }
+
+            lastCount = currentCount;
         }
+
+        if (currentSelectedId != lastSelectedId) {
+            Rml::ElementList nodes;
+            m_editorDoc->GetElementsByClassName(nodes, "tree-node");
+            for (auto* node : nodes) {
+                auto entityIdStr = node->GetAttribute<Rml::String>("entity-id", "");
+                if (!entityIdStr.empty()) {
+                    uint32_t rawId = std::stoul(entityIdStr);
+                    node->SetClass("selected", rawId == currentSelectedId);
+                }
+            }
+            lastSelectedId = currentSelectedId;
+            NX_CORE_INFO("EditorUIManager: Selection changed to entity {}", currentSelectedId);
+        }
+    } else {
+        static int debugLogTick = 0;
+        if (debugLogTick++ % 100 == 0) {
+            NX_CORE_WARN("EditorUIManager: Failed to locate 'hierarchy-tree' element in RML document!");
+        }
+    }
+
+    auto* lId = m_editorDoc->GetElementById("prop-entity-id");
+    auto* lName = m_editorDoc->GetElementById("prop-entity-name");
+
+    if (m_selectedEntity.isValid()) {
+        if (lId) lId->SetInnerRML(std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())));
+        if (lName && m_selectedEntity.hasComponent<TagComponent>()) {
+            lName->SetInnerRML(m_selectedEntity.getComponent<TagComponent>().name);
+        }
+    } else {
+        if (lId) lId->SetInnerRML("-");
+        if (lName) lName->SetInnerRML("None");
+
+        auto* px = m_editorDoc->GetElementById("prop-pos-x");
+        auto* py = m_editorDoc->GetElementById("prop-pos-y");
+        auto* pz = m_editorDoc->GetElementById("prop-pos-z");
+        if (px && !px->IsClassSet("focused")) px->SetAttribute("value", "");
+        if (py && !py->IsClassSet("focused")) py->SetAttribute("value", "");
+        if (pz && !pz->IsClassSet("focused")) pz->SetAttribute("value", "");
     }
 
     if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {

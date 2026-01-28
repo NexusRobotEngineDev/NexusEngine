@@ -164,6 +164,9 @@ void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
         case SDL_EVENT_MOUSE_BUTTON_UP:
             m_rmlContext->ProcessMouseButtonUp(event.button.button - 1, keyModifier);
             break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            m_rmlContext->ProcessMouseWheel(-event.wheel.y, keyModifier);
+            break;
         case SDL_EVENT_KEY_DOWN: {
             Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
             if (key != Rml::Input::KI_UNKNOWN) {

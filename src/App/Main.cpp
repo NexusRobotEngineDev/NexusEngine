@@ -441,6 +441,11 @@ void RunMainLoop() {
                     g_rosBridge->publishReplicas(g_scene->getRegistry());
                 }
             }
+
+            if (g_editorUIManager) {
+                g_editorUIManager->update(g_scene.get());
+            }
+
             g_rhiThread->resumeSync();
 
             RenderCommand cmd;
