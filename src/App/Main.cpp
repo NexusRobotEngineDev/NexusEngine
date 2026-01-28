@@ -44,12 +44,39 @@ std::unique_ptr<EditorUIManager> g_editorUIManager;
 
 std::unique_ptr<Scene> g_scene;
 std::unique_ptr<TextureManager> g_textureManager;
-#include <mutex>
-#include <vector>
+#include <array>
+#include <atomic>
 std::unique_ptr<RosBridgeSystem> g_rosBridge;
 
-std::mutex g_eventMutex;
-std::vector<SDL_Event> g_eventQueue;
+template<typename T, size_t Capacity>
+class SPSCQueue {
+public:
+    bool push(const T& item) {
+        size_t h = m_head.load(std::memory_order_relaxed);
+        size_t next = (h + 1) % Capacity;
+        if (next == m_tail.load(std::memory_order_acquire)) return false;
+        m_buffer[h] = item;
+        m_head.store(next, std::memory_order_release);
+        return true;
+    }
+    bool pop(T& item) {
+        size_t t = m_tail.load(std::memory_order_relaxed);
+        if (t == m_head.load(std::memory_order_acquire)) return false;
+        item = m_buffer[t];
+        m_tail.store((t + 1) % Capacity, std::memory_order_release);
+        return true;
+    }
+private:
+    std::array<T, Capacity> m_buffer;
+    std::atomic<size_t> m_head{0};
+    std::atomic<size_t> m_tail{0};
+};
+
+SPSCQueue<SDL_Event, 1024> g_eventQueue;
+
+static constexpr size_t TEXT_SIDE_BUF_COUNT = 64;
+static char g_textSideBuf[TEXT_SIDE_BUF_COUNT][64];
+static std::atomic<size_t> g_textSideBufIdx{0};
 
 struct Position { float x, y; };
 
@@ -63,14 +90,16 @@ struct InputState {
 void OnWindowEvent(const void* event) {
     const SDL_Event* sdlEvent = static_cast<const SDL_Event*>(event);
 
-    if (sdlEvent->type == SDL_EVENT_TEXT_INPUT && sdlEvent->text.text) {
-        if (g_renderer && g_renderer->getBridgeRenderer() && g_renderer->getBridgeRenderer()->getUIBridge()) {
-            g_renderer->getBridgeRenderer()->getUIBridge()->injectTextInput(std::string(sdlEvent->text.text));
-        }
+    SDL_Event copy = *sdlEvent;
+
+    if (copy.type == SDL_EVENT_TEXT_INPUT && copy.text.text) {
+        size_t idx = g_textSideBufIdx.fetch_add(1, std::memory_order_relaxed) % TEXT_SIDE_BUF_COUNT;
+        strncpy(g_textSideBuf[idx], copy.text.text, 63);
+        g_textSideBuf[idx][63] = '\0';
+        copy.text.text = g_textSideBuf[idx];
     }
 
-    std::lock_guard<std::mutex> lock(g_eventMutex);
-    g_eventQueue.push_back(*sdlEvent);
+    g_eventQueue.push(copy);
 }
 
 void ProcessEventSync(const SDL_Event& sdlEvent) {
@@ -301,10 +330,12 @@ void RunMainLoop() {
     std::vector<SDL_Event> localEvents;
     while (!g_quit) {
 
+        localEvents.clear();
         {
-            std::lock_guard<std::mutex> lock(g_eventMutex);
-            localEvents = std::move(g_eventQueue);
-            g_eventQueue.clear();
+            SDL_Event ev;
+            while (g_eventQueue.pop(ev)) {
+                localEvents.push_back(ev);
+            }
         }
 
         for (const auto& ev : localEvents) {
@@ -432,8 +463,11 @@ void RunMainLoop() {
         }
 
 #if ENABLE_VULKAN
+        auto t0 = std::chrono::high_resolution_clock::now();
         if (g_rhiThread) {
             g_rhiThread->requestSync();
+            auto t1 = std::chrono::high_resolution_clock::now();
+
             if (g_scene) {
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 HierarchySystem::update(g_scene->getRegistry());
@@ -441,17 +475,28 @@ void RunMainLoop() {
                     g_rosBridge->publishReplicas(g_scene->getRegistry());
                 }
             }
+            auto t2 = std::chrono::high_resolution_clock::now();
 
             if (g_editorUIManager) {
                 g_editorUIManager->update(g_scene.get());
             }
+            auto t3 = std::chrono::high_resolution_clock::now();
 
             g_rhiThread->resumeSync();
+            auto t4 = std::chrono::high_resolution_clock::now();
 
             RenderCommand cmd;
             cmd.type = RenderCommandType::Draw;
             cmd.registry = g_scene ? &g_scene->getRegistry() : nullptr;
             g_rhiThread->pushCommand(cmd);
+            auto t5 = std::chrono::high_resolution_clock::now();
+
+            static int frameCounter = 0;
+            if (++frameCounter % 120 == 0) {
+                auto us = [](auto d) { return std::chrono::duration_cast<std::chrono::microseconds>(d).count(); };
+                NX_CORE_INFO("PERF: reqSync={}us scene={}us editorUI={}us resSync={}us draw={}us total={}us",
+                    us(t1-t0), us(t2-t1), us(t3-t2), us(t4-t3), us(t5-t4), us(t5-t0));
+            }
         }
 #else
         g_context->sync();
