@@ -59,34 +59,10 @@ void VK_UIBridge::shutdown() {
     m_systemInterface.reset();
 }
 
-void VK_UIBridge::injectTextInput(const std::string& text) {
-    if (text.empty()) return;
-    std::lock_guard<std::mutex> lock(m_textInputMutex);
-    m_textInputQueue.push_back(text);
-}
 
-void VK_UIBridge::flushThreadSafeEvents() {
-    std::vector<std::string> localQueue;
-    {
-        std::lock_guard<std::mutex> lock(m_textInputMutex);
-        if (m_textInputQueue.empty()) return;
-        localQueue = std::move(m_textInputQueue);
-        m_textInputQueue.clear();
-    }
-
-    if (m_rmlContext) {
-        for (const auto& text : localQueue) {
-            if (auto focus = m_rmlContext->GetFocusElement()) {
-                NX_CORE_INFO("VK_UIBridge - Injecting TextInput: '{}'", text);
-                m_rmlContext->ProcessTextInput(text);
-            }
-        }
-    }
-}
 
 void VK_UIBridge::update() {
     if (m_rmlContext) {
-        flushThreadSafeEvents();
         m_rmlContext->Update();
     }
     if (m_renderInterface) {
@@ -182,6 +158,9 @@ void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
             break;
         }
         case SDL_EVENT_TEXT_INPUT: {
+            if (event.text.text) {
+                m_rmlContext->ProcessTextInput(event.text.text);
+            }
             break;
         }
     }

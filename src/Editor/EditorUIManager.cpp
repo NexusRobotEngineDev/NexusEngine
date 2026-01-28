@@ -179,10 +179,11 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
 
         if (clickedTreeNode) {
             auto entityIdStr = clickedTreeNode->GetAttribute<Rml::String>("entity-id", "");
-            if (!entityIdStr.empty() && m_currentScene) {
+            if (!entityIdStr.empty()) {
                 uint32_t rawId = std::stoul(entityIdStr);
-                m_selectedEntity = Entity(static_cast<entt::entity>(rawId), &m_currentScene->getRegistry());
-                NX_CORE_INFO("EditorUIManager: Selected entity ID: {}", rawId);
+                NX_CORE_INFO("[RENDER_THREAD] UICommand push: Select+ToggleExpand entityId={}", rawId);
+                m_uiCommandQueue.push({UICommandType::Select, rawId});
+                m_uiCommandQueue.push({UICommandType::ToggleExpand, rawId});
             }
         }
     }
@@ -330,6 +331,34 @@ bool EditorUIManager::loadLayout(const std::string& filePath) {
     }
 }
 
+void EditorUIManager::processUICommands() {
+    if (!m_currentScene) return;
+    auto& reg = m_currentScene->getRegistry();
+
+    UICommand cmd;
+    while (m_uiCommandQueue.pop(cmd)) {
+        NX_CORE_INFO("[MAIN_THREAD] UICommand pop: type={} entityId={}", (int)cmd.type, cmd.entityId);
+        switch (cmd.type) {
+            case UICommandType::Select: {
+                entt::entity ent = static_cast<entt::entity>(cmd.entityId);
+                if (reg.getInternal().valid(ent)) {
+                    m_selectedEntity = Entity(ent, &reg);
+                }
+                break;
+            }
+            case UICommandType::ToggleExpand: {
+                if (m_expandedEntities.count(cmd.entityId)) {
+                    m_expandedEntities.erase(cmd.entityId);
+                } else {
+                    m_expandedEntities.insert(cmd.entityId);
+                }
+                m_hierarchyDirty = true;
+                break;
+            }
+        }
+    }
+}
+
 void EditorUIManager::update(Scene* scene) {
     if (!scene) {
         NX_CORE_WARN("EditorUIManager::update called with null scene!");
@@ -340,6 +369,7 @@ void EditorUIManager::update(Scene* scene) {
         return;
     }
     m_currentScene = scene;
+    processUICommands();
 
     Rml::Element* treeParent = m_editorDoc->GetElementById("hierarchy-tree");
     if (treeParent) {
@@ -347,13 +377,19 @@ void EditorUIManager::update(Scene* scene) {
         auto view = registry.view<TagComponent>();
 
         int currentCount = 0;
-        for (auto ent : view) currentCount++;
+        for ([[maybe_unused]] auto ent : view) ++currentCount;
 
         static int lastCount = -1;
         static uint32_t lastSelectedId = 0xFFFFFFFF;
         uint32_t currentSelectedId = m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
 
         if (currentCount != lastCount) {
+            m_hierarchyDirty = true;
+            lastCount = currentCount;
+        }
+
+        if (m_hierarchyDirty) {
+            m_hierarchyDirty = false;
             bool foundSelected = false;
             treeParent->SetInnerRML("");
 
@@ -361,6 +397,15 @@ void EditorUIManager::update(Scene* scene) {
                 Entity entity(ent, &registry);
                 if (!entity.hasComponent<TagComponent>()) return;
                 auto& tag = entity.getComponent<TagComponent>();
+
+                bool hasChildren = false;
+                if (entity.hasComponent<HierarchyComponent>()) {
+                    auto& hc = entity.getComponent<HierarchyComponent>();
+                    hasChildren = !hc.children.empty();
+                }
+
+                uint32_t entId = static_cast<uint32_t>(ent);
+                bool isExpanded = m_expandedEntities.count(entId) > 0;
 
                 auto nodePtr = m_editorDoc->CreateElement("div");
                 nodePtr->SetClass("tree-node", true);
@@ -373,12 +418,17 @@ void EditorUIManager::update(Scene* scene) {
                     nodePtr->SetProperty("padding-left", std::to_string(10 + depth * 15) + "dp");
                 }
 
-                nodePtr->SetInnerRML(tag.name);
-                nodePtr->SetAttribute("entity-id", std::to_string(static_cast<uint32_t>(ent)));
-                nodePtr->AddEventListener(Rml::EventId::Click, this);
+                std::string prefix;
+                if (hasChildren) {
+                    prefix = isExpanded ? "[-] " : "[+] ";
+                } else {
+                    prefix = "    ";
+                }
+                nodePtr->SetInnerRML(prefix + tag.name);
+                nodePtr->SetAttribute("entity-id", std::to_string(entId));
                 treeParent->AppendChild(std::move(nodePtr));
 
-                if (entity.hasComponent<HierarchyComponent>()) {
+                if (hasChildren && isExpanded) {
                     auto& hc = entity.getComponent<HierarchyComponent>();
                     for (auto child : hc.children) {
                         if (registry.getInternal().valid(child)) {
@@ -402,8 +452,6 @@ void EditorUIManager::update(Scene* scene) {
                 m_selectedEntity = {};
                 currentSelectedId = 0xFFFFFFFF;
             }
-
-            lastCount = currentCount;
         }
 
         if (currentSelectedId != lastSelectedId) {

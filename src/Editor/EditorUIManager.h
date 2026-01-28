@@ -7,11 +7,48 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <set>
+#include <array>
+#include <atomic>
 
 namespace Nexus {
 
 class VK_UIBridge;
 class Scene;
+
+enum class UICommandType : uint8_t {
+    Select,
+    ToggleExpand,
+};
+
+struct UICommand {
+    UICommandType type;
+    uint32_t entityId;
+};
+
+template<typename T, size_t Cap>
+class UICommandQueue {
+public:
+    bool push(const T& item) {
+        size_t h = m_head.load(std::memory_order_relaxed);
+        size_t next = (h + 1) % Cap;
+        if (next == m_tail.load(std::memory_order_acquire)) return false;
+        m_buf[h] = item;
+        m_head.store(next, std::memory_order_release);
+        return true;
+    }
+    bool pop(T& item) {
+        size_t t = m_tail.load(std::memory_order_relaxed);
+        if (t == m_head.load(std::memory_order_acquire)) return false;
+        item = m_buf[t];
+        m_tail.store((t + 1) % Cap, std::memory_order_release);
+        return true;
+    }
+private:
+    std::array<T, Cap> m_buf;
+    std::atomic<size_t> m_head{0};
+    std::atomic<size_t> m_tail{0};
+};
 
 /**
  * @brief 编辑器 UI 管理器，负责面板的拖拽、吸附与布局持久化
@@ -21,50 +58,19 @@ public:
     EditorUIManager() = default;
     ~EditorUIManager() = default;
 
-    /**
-     * @brief 初始化编辑器 UI，加载布局文档
-     */
     bool initialize(VK_UIBridge* uiBridge);
-
-    /**
-     * @brief 关闭编辑器并清理资源
-     */
     void shutdown();
-
-    /**
-     * @brief 注册一个面板到管理器
-     */
     void registerPanel(std::unique_ptr<Panel> panel, const std::string& defaultDockZone);
-
-    /**
-     * @brief 将面板设为浮动状态
-     */
     void floatPanel(const std::string& panelId, float x, float y);
-
-    /**
-     * @brief 将面板吸附到指定 Dock 区域
-     */
     void dockPanel(const std::string& panelId, const std::string& dockZoneId);
-
-    /**
-     * @brief 逐帧更新 UI 状态，例如场景树与选中实体的属性
-     */
     void update(Scene* scene);
-
-    /**
-     * @brief 保存当前布局到 JSON 文件
-     */
     bool saveLayout(const std::string& filePath);
-
-    /**
-     * @brief 从 JSON 文件中恢复布局
-     */
     bool loadLayout(const std::string& filePath);
-
     void ProcessEvent(Rml::Event& event) override;
 
 private:
     void setupEventListeners();
+    void processUICommands();
     Rml::Element* findDockZoneAtPosition(float x, float y);
 
     VK_UIBridge* m_uiBridge = nullptr;
@@ -79,6 +85,10 @@ private:
     Entity m_selectedEntity{};
     Scene* m_currentScene = nullptr;
     double m_lastUpdateTime = 0.0;
+    std::set<uint32_t> m_expandedEntities;
+    bool m_hierarchyDirty = true;
+
+    UICommandQueue<UICommand, 128> m_uiCommandQueue;
 };
 
 } // namespace Nexus
