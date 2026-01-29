@@ -181,7 +181,6 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
             auto entityIdStr = clickedTreeNode->GetAttribute<Rml::String>("entity-id", "");
             if (!entityIdStr.empty()) {
                 uint32_t rawId = std::stoul(entityIdStr);
-                NX_CORE_INFO("[RENDER_THREAD] UICommand push: Select+ToggleExpand entityId={}", rawId);
                 m_uiCommandQueue.push({UICommandType::Select, rawId});
                 m_uiCommandQueue.push({UICommandType::ToggleExpand, rawId});
             }
@@ -337,7 +336,6 @@ void EditorUIManager::processUICommands() {
 
     UICommand cmd;
     while (m_uiCommandQueue.pop(cmd)) {
-        NX_CORE_INFO("[MAIN_THREAD] UICommand pop: type={} entityId={}", (int)cmd.type, cmd.entityId);
         switch (cmd.type) {
             case UICommandType::Select: {
                 entt::entity ent = static_cast<entt::entity>(cmd.entityId);

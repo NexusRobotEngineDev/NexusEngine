@@ -591,7 +591,6 @@ void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
 Status VK_Renderer::renderFrame(Registry* registry) {
-    auto rf0 = std::chrono::high_resolution_clock::now();
 #ifdef ENABLE_RMLUI
     if (m_uiBridge && m_swapchain->getExtent().width > 0 && m_swapchain->getExtent().height > 0) {
         SDL_Event evt;
@@ -601,23 +600,13 @@ Status VK_Renderer::renderFrame(Registry* registry) {
         m_uiBridge->update();
     }
 #endif
-    auto rf1 = std::chrono::high_resolution_clock::now();
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
-    auto rf2 = std::chrono::high_resolution_clock::now();
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, registry);
-    auto rf3 = std::chrono::high_resolution_clock::now();
     endFrame(imageIndex);
-    auto rf4 = std::chrono::high_resolution_clock::now();
-
-    static int rfCounter = 0;
-    if (++rfCounter % 120 == 0) {
-        auto us = [](auto d) { return std::chrono::duration_cast<std::chrono::microseconds>(d).count(); };
-        NX_CORE_INFO("RENDER_PERF: ui={}us beginFrame={}us record={}us endFrame={}us total={}us",
-            us(rf1-rf0), us(rf2-rf1), us(rf3-rf2), us(rf4-rf3), us(rf4-rf0));
-    }
     return OkStatus();
 }
+
 
 void VK_Renderer::processEvent(const void* event) {
 #ifdef ENABLE_RMLUI
