@@ -469,11 +469,8 @@ void RunMainLoop() {
         }
 
 #if ENABLE_VULKAN
-        auto t0 = std::chrono::high_resolution_clock::now();
         if (g_rhiThread) {
             g_rhiThread->requestSync();
-            auto t1 = std::chrono::high_resolution_clock::now();
-
             if (g_scene) {
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 HierarchySystem::update(g_scene->getRegistry());
@@ -481,28 +478,17 @@ void RunMainLoop() {
                     g_rosBridge->publishReplicas(g_scene->getRegistry());
                 }
             }
-            auto t2 = std::chrono::high_resolution_clock::now();
 
             if (g_editorUIManager) {
                 g_editorUIManager->update(g_scene.get());
             }
-            auto t3 = std::chrono::high_resolution_clock::now();
 
             g_rhiThread->resumeSync();
-            auto t4 = std::chrono::high_resolution_clock::now();
 
             RenderCommand cmd;
             cmd.type = RenderCommandType::Draw;
             cmd.registry = g_scene ? &g_scene->getRegistry() : nullptr;
             g_rhiThread->pushCommand(cmd);
-            auto t5 = std::chrono::high_resolution_clock::now();
-
-            static int frameCounter = 0;
-            if (++frameCounter % 120 == 0) {
-                auto us = [](auto d) { return std::chrono::duration_cast<std::chrono::microseconds>(d).count(); };
-                NX_CORE_INFO("PERF: reqSync={}us scene={}us editorUI={}us resSync={}us draw={}us total={}us",
-                    us(t1-t0), us(t2-t1), us(t3-t2), us(t4-t3), us(t5-t4), us(t5-t0));
-            }
         }
 #else
         g_context->sync();
