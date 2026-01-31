@@ -25,6 +25,7 @@ struct BindlessConstants {
     float2 padding;
 
     float4x4 mvp;
+    float4 highlightColor;
 };
 
 [[vk::push_constant]]
@@ -59,6 +60,10 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     float ambient = 0.2;
     float3 finalColor = albedo.rgb * (diff + ambient) + spec;
+
+    if (constants.highlightColor.a > 0.0) {
+        finalColor = lerp(finalColor, constants.highlightColor.rgb, constants.highlightColor.a);
+    }
 
     return float4(finalColor, albedo.a);
 }

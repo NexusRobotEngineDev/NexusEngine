@@ -99,6 +99,11 @@ public:
      * @brief 获取指定名称刚体的世界坐标与旋转
      */
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) = 0;
+
+    /**
+     * @brief 为指定名称的关节施加 PD 控制与前馈力矩
+     */
+    virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) = 0;
 };
 
 /**

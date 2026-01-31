@@ -18,6 +18,7 @@
     "shaderc",
     "spdlog",
     "stb",
+    "tinyxml2",
     "vulkan",
     "zeromq",
     "cppzmq"

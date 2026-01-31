@@ -202,18 +202,14 @@ Status InitializeEngine(const EngineConfig& config) {
 
 #if ENABLE_VULKAN
         if (g_renderer && g_textureManager) {
-            Entity droneRoot = ModelLoader::loadModel(g_textureManager.get(), g_scene.get(), g_renderer->getMeshManager(), "Data/Models/drone.glb");
-            if (droneRoot.isValid()) {
-                auto& transform = droneRoot.getComponent<TransformComponent>();
-                transform.rotation = {0.0f, 0.0f, 0.0f, 1.0f};
-            }
+            Entity go2Root = ModelLoader::loadURDF(g_textureManager.get(), g_scene.get(), g_renderer->getMeshManager(), "Data/Models/go2/go2_description.urdf");
         }
 #endif
     } else {
 #if ENABLE_VULKAN
         if (g_renderer && g_textureManager) {
             Scene dummyScene("Preload");
-            ModelLoader::loadModel(g_textureManager.get(), &dummyScene, g_renderer->getMeshManager(), "Data/Models/drone.glb");
+            ModelLoader::loadURDF(g_textureManager.get(), &dummyScene, g_renderer->getMeshManager(), "Data/Models/go2/go2_description.urdf");
         }
 #endif
 
@@ -265,7 +261,7 @@ Status InitializeEngine(const EngineConfig& config) {
         delete g_physicsSystem;
         g_physicsSystem = nullptr;
     } else {
-        auto loadStatus = g_physicsSystem->loadModel("Data/Scenes/drone.xml");
+        auto loadStatus = g_physicsSystem->loadModel("Data/Scenes/go2_mujoco/scene.xml");
         if (!loadStatus.ok()) {
             NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
         }
@@ -472,8 +468,11 @@ void RunMainLoop() {
         if (g_rhiThread) {
             g_rhiThread->requestSync();
             if (g_scene) {
-                RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
+                if (g_rosBridge && g_physicsSystem) {
+                    g_rosBridge->applyIncomingCommands(g_physicsSystem);
+                }
                 HierarchySystem::update(g_scene->getRegistry());
+                RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
                     g_rosBridge->publishReplicas(g_scene->getRegistry());
                 }

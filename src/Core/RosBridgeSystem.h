@@ -35,6 +35,11 @@ public:
      */
     void publishReplicas(Registry& registry);
 
+    /**
+     * @brief 消费从 ZMQ 接收到的关节控制指令，并直接下发到底层物理系统
+     */
+    void applyIncomingCommands(IPhysicsSystem* physicsSystem);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

@@ -10,7 +10,9 @@ add_library(Core STATIC ${CORE_SOURCES})
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(cppzmq CONFIG REQUIRED)
-target_link_libraries(Core PUBLIC BridgeImpl Bridge nlohmann_json::nlohmann_json assimp::assimp cppzmq)
+find_package(tinyxml2 CONFIG REQUIRED)
+
+target_link_libraries(Core PUBLIC BridgeImpl Bridge nlohmann_json::nlohmann_json assimp::assimp cppzmq tinyxml2::tinyxml2)
 
 target_include_directories(Core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"

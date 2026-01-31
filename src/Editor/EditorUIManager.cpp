@@ -12,6 +12,9 @@
 
 namespace Nexus {
 
+extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
+extern std::atomic<uint32_t> g_RenderStats_Triangles;
+
 bool EditorUIManager::initialize(VK_UIBridge* uiBridge) {
     m_uiBridge = uiBridge;
 
@@ -49,11 +52,6 @@ void EditorUIManager::floatPanel(const std::string& panelId, float x, float y) {
     Rml::Element* panelEl = m_editorDoc->GetElementById(panelId);
     if (!panelEl) return;
 
-    Rml::Element* body = m_editorDoc->GetFirstChild();
-    if (body) {
-        body->AppendChild(panelEl->GetParentNode()->RemoveChild(panelEl));
-    }
-
     panelEl->SetClass("floating", true);
     panelEl->SetProperty("left", std::to_string((int)x) + "dp");
     panelEl->SetProperty("top", std::to_string((int)y) + "dp");
@@ -81,10 +79,11 @@ void EditorUIManager::dockPanel(const std::string& panelId, const std::string& d
     panelEl->RemoveProperty("top");
     panelEl->RemoveProperty("position");
 
-    if (panelEl->GetParentNode()) {
-        panelEl->GetParentNode()->RemoveChild(panelEl);
+    Rml::Element* parent = panelEl->GetParentNode();
+    if (parent && parent != it->second) {
+        auto detached = parent->RemoveChild(panelEl);
+        it->second->AppendChild(std::move(detached));
     }
-    it->second->AppendChild(Rml::ElementPtr(panelEl));
 
     for (auto& p : m_panels) {
         if (p->getId() == panelId) {
@@ -107,8 +106,13 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
             m_dragStartY = event.GetParameter("mouse_y", 0.0f);
 
             std::string panelId = panel->GetId();
-            if (!panelId.empty()) {
-                floatPanel(panelId, m_dragStartX - 100.0f, m_dragStartY - 10.0f);
+            if (!panelId.empty() && panelId.size() < 32) {
+                UICommand cmd{};
+                cmd.type = UICommandType::DragFloat;
+                strncpy(cmd.panelId, panelId.c_str(), 31);
+                cmd.x = m_dragStartX - 100.0f;
+                cmd.y = m_dragStartY - 10.0f;
+                m_uiCommandQueue.push(cmd);
             }
         }
     }
@@ -138,8 +142,15 @@ void EditorUIManager::ProcessEvent(Rml::Event& event) {
             Rml::Element* targetZone = findDockZoneAtPosition(mouseX, mouseY);
             std::string panelId = m_draggedElement->GetId();
 
-            if (targetZone && !panelId.empty()) {
-                dockPanel(panelId, targetZone->GetId());
+            if (targetZone && !panelId.empty() && panelId.size() < 32) {
+                std::string targetId = targetZone->GetId();
+                if (targetId.size() < 32) {
+                    UICommand cmd{};
+                    cmd.type = UICommandType::DragDock;
+                    strncpy(cmd.panelId, panelId.c_str(), 31);
+                    strncpy(cmd.targetZoneId, targetId.c_str(), 31);
+                    m_uiCommandQueue.push(cmd);
+                }
             }
 
             for (auto& [zoneId, zoneEl] : m_dockZones) {
@@ -336,23 +347,37 @@ void EditorUIManager::processUICommands() {
 
     UICommand cmd;
     while (m_uiCommandQueue.pop(cmd)) {
-        switch (cmd.type) {
-            case UICommandType::Select: {
-                entt::entity ent = static_cast<entt::entity>(cmd.entityId);
-                if (reg.getInternal().valid(ent)) {
-                    m_selectedEntity = Entity(ent, &reg);
+        try {
+            switch (cmd.type) {
+                case UICommandType::Select: {
+                    entt::entity ent = static_cast<entt::entity>(cmd.entityId);
+                    if (reg.getInternal().valid(ent)) {
+                        m_selectedEntity = Entity(ent, &reg);
+                    }
+                    break;
                 }
-                break;
-            }
-            case UICommandType::ToggleExpand: {
-                if (m_expandedEntities.count(cmd.entityId)) {
-                    m_expandedEntities.erase(cmd.entityId);
-                } else {
-                    m_expandedEntities.insert(cmd.entityId);
+                case UICommandType::ToggleExpand: {
+                    if (m_expandedEntities.count(cmd.entityId)) {
+                        m_expandedEntities.erase(cmd.entityId);
+                    } else {
+                        m_expandedEntities.insert(cmd.entityId);
+                    }
+                    m_hierarchyDirty = true;
+                    break;
                 }
-                m_hierarchyDirty = true;
-                break;
+                case UICommandType::DragFloat: {
+                    floatPanel(cmd.panelId, cmd.x, cmd.y);
+                    break;
+                }
+                case UICommandType::DragDock: {
+                    dockPanel(cmd.panelId, cmd.targetZoneId);
+                    break;
+                }
             }
+        } catch (const std::exception& e) {
+            NX_CORE_ERROR("MAIN UI THREAD EXCEPTION: {}", e.what());
+        } catch (...) {
+            NX_CORE_ERROR("MAIN UI THREAD UNKNOWN EXCEPTION");
         }
     }
 }
@@ -490,6 +515,19 @@ void EditorUIManager::update(Scene* scene) {
         if (px && !px->IsClassSet("focused")) px->SetAttribute("value", "");
         if (py && !py->IsClassSet("focused")) py->SetAttribute("value", "");
         if (pz && !pz->IsClassSet("focused")) pz->SetAttribute("value", "");
+
+        auto* rot = m_editorDoc->GetElementById("prop-rot");
+        auto* scl = m_editorDoc->GetElementById("prop-scale");
+        auto* wx = m_editorDoc->GetElementById("prop-world-x");
+        auto* wy = m_editorDoc->GetElementById("prop-world-y");
+        auto* wz = m_editorDoc->GetElementById("prop-world-z");
+        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
+        if (rot) rot->SetInnerRML("-");
+        if (scl) scl->SetInnerRML("-");
+        if (wx) wx->SetInnerRML("-");
+        if (wy) wy->SetInnerRML("-");
+        if (wz) wz->SetInnerRML("-");
+        if (pn) pn->SetInnerRML("-");
     }
 
     if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {
@@ -499,10 +537,65 @@ void EditorUIManager::update(Scene* scene) {
         auto* pz = m_editorDoc->GetElementById("prop-pos-z");
 
         if (px && py && pz && !px->IsClassSet("focused") && !py->IsClassSet("focused") && !pz->IsClassSet("focused")) {
-            px->SetAttribute("value", std::to_string(transform.position[0]));
-            py->SetAttribute("value", std::to_string(transform.position[1]));
-            pz->SetAttribute("value", std::to_string(transform.position[2]));
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.4f", transform.position[0]); px->SetAttribute("value", std::string(buf));
+            snprintf(buf, sizeof(buf), "%.4f", transform.position[1]); py->SetAttribute("value", std::string(buf));
+            snprintf(buf, sizeof(buf), "%.4f", transform.position[2]); pz->SetAttribute("value", std::string(buf));
         }
+
+        auto* rot = m_editorDoc->GetElementById("prop-rot");
+        if (rot) {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)",
+                transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]);
+            rot->SetInnerRML(buf);
+        }
+
+        auto* scl = m_editorDoc->GetElementById("prop-scale");
+        if (scl) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)",
+                transform.scale[0], transform.scale[1], transform.scale[2]);
+            scl->SetInnerRML(buf);
+        }
+
+        auto* wx = m_editorDoc->GetElementById("prop-world-x");
+        auto* wy = m_editorDoc->GetElementById("prop-world-y");
+        auto* wz = m_editorDoc->GetElementById("prop-world-z");
+        if (wx && wy && wz) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); wx->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[13]); wy->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); wz->SetInnerRML(buf);
+        }
+
+        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
+        if (pn) {
+            if (m_selectedEntity.hasComponent<HierarchyComponent>()) {
+                auto& hc = m_selectedEntity.getComponent<HierarchyComponent>();
+                if (hc.parent != entt::null && m_currentScene) {
+                    Entity parentEnt(hc.parent, &m_currentScene->getRegistry());
+                    if (parentEnt.hasComponent<TagComponent>()) {
+                        pn->SetInnerRML(parentEnt.getComponent<TagComponent>().name);
+                    } else {
+                        pn->SetInnerRML("(id: " + std::to_string((uint32_t)hc.parent) + ")");
+                    }
+                } else {
+                    pn->SetInnerRML("(root)");
+                }
+            } else {
+                pn->SetInnerRML("(none)");
+            }
+        }
+    }
+
+    auto* drawCallsEl = m_editorDoc->GetElementById("prop-draw-calls");
+    auto* trianglesEl = m_editorDoc->GetElementById("prop-triangles");
+    if (drawCallsEl) {
+        drawCallsEl->SetInnerRML(std::to_string(g_RenderStats_DrawCalls.load(std::memory_order_relaxed)));
+    }
+    if (trianglesEl) {
+        trianglesEl->SetInnerRML(std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed)));
     }
 }
 

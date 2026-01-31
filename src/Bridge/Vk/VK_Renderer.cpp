@@ -6,6 +6,9 @@
 
 namespace Nexus {
 
+std::atomic<uint32_t> g_RenderStats_DrawCalls{0};
+std::atomic<uint32_t> g_RenderStats_Triangles{0};
+
 VK_Renderer::VK_Renderer(VK_Context* context, VK_Swapchain* swapchain)
     : m_context(context), m_swapchain(swapchain), m_device(context->getDevice()) {
 }
@@ -493,6 +496,8 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             bool shouldLog = (logCounter++ % 600 == 0);
 
             size_t meshCount = 0;
+            uint32_t totalTriangles = 0;
+            uint32_t selectedId = m_selectedEntityId.load(std::memory_order_relaxed);
             for (auto entity : meshView) {
                 auto& mesh = meshView.get<MeshComponent>(entity);
                 auto& transform = meshView.get<TransformComponent>(entity);
@@ -500,8 +505,12 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                 std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
 
                 if (shouldLog) {
-                    NX_CORE_INFO("Drawing Component: entityID={}, indexCount={}, vOffset={}, worldPos=({},{},{})",
-                                 (uint32_t)entity, mesh.indexCount, mesh.vertexOffset,
+                    std::string eName = "Unknown";
+                    if (registry->has<TagComponent>(entity)) {
+                        eName = registry->get<TagComponent>(entity).name;
+                    }
+                    NX_CORE_INFO("Drawing Component: entityID={} (Name={}), indexCount={}, vOffset={}, worldPos=({},{},{})",
+                                 (uint32_t)entity, eName, mesh.indexCount, mesh.vertexOffset,
                                  transform.position[0], transform.position[1], transform.position[2]);
                     NX_CORE_INFO("MVP Matrix (Col-Major):");
                     NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[0], mvp[4], mvp[8], mvp[12]);
@@ -528,13 +537,26 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                 constants.roughnessFactor = mesh.roughnessFactor;
 
                 constants.mvp = mvp;
+
+                bool isSelected = ((uint32_t)entity == selectedId);
+                if (isSelected) {
+                    constants.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
+                } else {
+                    constants.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
+                }
+
                 commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
 
                 commandBuffer.drawIndexed(mesh.indexCount, 1, mesh.indexOffset, mesh.vertexOffset, 0);
                 meshCount++;
+                totalTriangles += mesh.indexCount / 3;
             }
+
+            g_RenderStats_DrawCalls.store((uint32_t)meshCount, std::memory_order_relaxed);
+            g_RenderStats_Triangles.store(totalTriangles, std::memory_order_relaxed);
+
             if (shouldLog) {
-                NX_CORE_INFO("Recorded {} mesh draw calls in this command buffer.", meshCount);
+                NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", meshCount, totalTriangles);
             }
         } else {
             static bool bufferWarned = false;
