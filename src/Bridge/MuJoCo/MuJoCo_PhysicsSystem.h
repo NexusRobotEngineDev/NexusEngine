@@ -3,6 +3,8 @@
 #include "Base.h"
 #include "Interfaces.h"
 #include "thirdparty.h"
+#include <unordered_map>
+#include <mutex>
 
 namespace Nexus {
 
@@ -20,14 +22,27 @@ public:
     virtual void shutdown() override;
 
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) override;
+    virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) override;
+
+    mjModel* m_model = nullptr;
+    mjData*  m_data  = nullptr;
 
 private:
+    struct JointCmd {
+        float q = 0.0f;
+        float dq = 0.0f;
+        float kp = 0.0f;
+        float kd = 0.0f;
+        float tau = 0.0f;
+    };
     static void* allocate(size_t size) { return malloc(size); }
     static void free(void* ptr) { ::free(ptr); }
     static void* reallocate(void* ptr, size_t size) { return realloc(ptr, size); }
 
-    mjModel* m_model = nullptr;
-    mjData* m_data = nullptr;
+    double m_timeStepAccumulator = 0.0;
+    std::unordered_map<std::string, int> m_actuatorName2Id;
+    std::unordered_map<int, JointCmd> m_pendingCommands;
+    std::mutex m_cmdMutex;
 };
 
 } // namespace Nexus

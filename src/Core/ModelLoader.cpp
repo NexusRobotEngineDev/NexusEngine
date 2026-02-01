@@ -9,29 +9,42 @@
 #include <assimp/postprocess.h>
 #include <vector>
 #include "TextureManager.h"
+#include "URDFLoader.h"
 #include "../Bridge/thirdparty.h"
 
 namespace Nexus {
 namespace Core {
 
 static void processNode(TextureManager* textureManager, aiNode* node, const aiScene* aScene, Scene* engineScene, MeshManager* meshManager, Entity parentEntity, const std::string& directory) {
-    Entity nodeEntity = engineScene->createEntity(node->mName.C_Str());
+    std::string prefix = "";
+    if (parentEntity.isValid() && engineScene->getRegistry().has<TagComponent>(parentEntity.getHandle())) {
+        prefix = engineScene->getRegistry().get<TagComponent>(parentEntity.getHandle()).name + "_";
+    }
 
-    aiVector3D scale;
-    aiQuaternion rotation;
-    aiVector3D position;
-    node->mTransformation.Decompose(scale, rotation, position);
+    Entity nodeEntity;
+    if (parentEntity.isValid() && node == aScene->mRootNode) {
+        nodeEntity = parentEntity;
+    } else {
+        nodeEntity = engineScene->createEntity(prefix + node->mName.C_Str());
+    }
 
     auto& transform = nodeEntity.getComponent<TransformComponent>();
+
+    aiVector3D position, rotationEuler, scale;
+    node->mTransformation.Decompose(scale, rotationEuler, position);
+
     transform.position = {position.x, position.y, position.z};
-    transform.rotation = {rotation.x, rotation.y, rotation.z, rotation.w};
+
+    aiQuaternion rotationQuat = aiQuaternion(rotationEuler.y, rotationEuler.z, rotationEuler.x);
+    transform.rotation = {rotationQuat.x, rotationQuat.y, rotationQuat.z, rotationQuat.w};
+
     transform.scale = {scale.x, scale.y, scale.z};
 
     NX_CORE_INFO("[NodeDebug] Node: {}, Pos: ({},{},{}), Rot: ({},{},{},{})",
-                 node->mName.C_Str(), position.x, position.y, position.z,
-                 rotation.x, rotation.y, rotation.z, rotation.w);
+                 nodeEntity.getComponent<TagComponent>().name, position.x, position.y, position.z,
+                 rotationQuat.x, rotationQuat.y, rotationQuat.z, rotationQuat.w);
 
-    if (parentEntity.isValid()) {
+    if (parentEntity.isValid() && nodeEntity != parentEntity) {
         engineScene->setParent(nodeEntity, parentEntity);
     }
 
@@ -42,7 +55,7 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
             if (node->mNumMeshes == 1) {
                 subMeshEntity = nodeEntity;
             } else {
-                subMeshEntity = engineScene->createEntity(std::string(node->mName.C_Str()) + "_mesh" + std::to_string(m));
+                subMeshEntity = engineScene->createEntity(prefix + node->mName.C_Str() + "_mesh" + std::to_string(m));
                 engineScene->setParent(subMeshEntity, nodeEntity);
             }
 
@@ -146,7 +159,8 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
             }
 
             uint32_t vOffset, iOffset;
-            if (meshManager->addMesh(vertices, indices, vOffset, iOffset).ok()) {
+            auto addMeshStatus = meshManager->addMesh(vertices, indices, vOffset, iOffset);
+            if (addMeshStatus.ok()) {
                 auto& meshComp = subMeshEntity.addComponent<MeshComponent>();
                 meshComp.vertexOffset = vOffset;
                 meshComp.indexOffset = iOffset;
@@ -164,6 +178,8 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
                 }
 
                 NX_CORE_INFO("[TextureDebug] Submesh entity assigned: Albedo={}, Sampler={}", albedoIndex, samplerIndex);
+            } else {
+                NX_CORE_ERROR("MeshManager::addMesh Failed: {}", addMeshStatus.message());
             }
         }
     }
@@ -190,8 +206,121 @@ Entity ModelLoader::loadModel(TextureManager* textureManager, Scene* scene, Mesh
 
     processNode(textureManager, aScene->mRootNode, aScene, scene, meshManager, rootEntity, directory);
 
+    aiVector3D bboxMin(1e10f, 1e10f, 1e10f), bboxMax(-1e10f, -1e10f, -1e10f);
+    for (unsigned int m = 0; m < aScene->mNumMeshes; m++) {
+        const aiMesh* mesh = aScene->mMeshes[m];
+        for (unsigned int v = 0; v < mesh->mNumVertices; v++) {
+            const auto& p = mesh->mVertices[v];
+            bboxMin.x = std::min(bboxMin.x, p.x); bboxMin.y = std::min(bboxMin.y, p.y); bboxMin.z = std::min(bboxMin.z, p.z);
+            bboxMax.x = std::max(bboxMax.x, p.x); bboxMax.y = std::max(bboxMax.y, p.y); bboxMax.z = std::max(bboxMax.z, p.z);
+        }
+    }
+    NX_CORE_INFO("BBOX [{}]: size=({:.3f}, {:.3f}, {:.3f}) min=({:.3f},{:.3f},{:.3f}) max=({:.3f},{:.3f},{:.3f})",
+        path,
+        bboxMax.x - bboxMin.x, bboxMax.y - bboxMin.y, bboxMax.z - bboxMin.z,
+        bboxMin.x, bboxMin.y, bboxMin.z, bboxMax.x, bboxMax.y, bboxMax.z);
+
     NX_CORE_INFO("Successfully loaded model via Assimp: {}", fullPath);
     return rootEntity;
+}
+
+Entity ModelLoader::loadURDF(TextureManager* textureManager, Scene* scene, MeshManager* meshManager, const std::string& urdfPath) {
+    std::string fullPath = ResourceLoader::getBasePath() + urdfPath;
+    auto result = NxURDF::parseFile(fullPath);
+    if (!result) {
+        NX_CORE_ERROR("NxURDF: 加载 URDF 失败: {}", fullPath);
+        return Entity();
+    }
+
+    const auto& model = *result;
+    std::string urdfDir = urdfPath.substr(0, urdfPath.find_last_of("/\\"));
+    NX_CORE_INFO("NxURDF: 解析成功 '{}' — {} links, {} joints",
+                 model.name, model.links.size(), model.joints.size());
+
+    auto rpyToQuat = [](double r, double p, double y) -> std::array<float, 4> {
+        double cr = std::cos(r * 0.5), sr = std::sin(r * 0.5);
+        double cp = std::cos(p * 0.5), sp = std::sin(p * 0.5);
+        double cy = std::cos(y * 0.5), sy = std::sin(y * 0.5);
+
+        return {
+            static_cast<float>(sr * cp * cy - cr * sp * sy),
+            static_cast<float>(cr * sp * cy + sr * cp * sy),
+            static_cast<float>(cr * cp * sy - sr * sp * cy),
+            static_cast<float>(cr * cp * cy + sr * sp * sy)
+        };
+    };
+
+    std::string rootName = model.rootLinkName();
+
+    Entity urdfRootEntity = scene->createEntity(model.name + "_root");
+    auto& rootTr = urdfRootEntity.getComponent<TransformComponent>();
+    rootTr.rotation = {-0.7071068f, 0.0f, 0.0f, 0.7071068f};
+
+    std::unordered_map<std::string, Entity> linkEntities;
+    for (const auto& link : model.links) {
+        Entity linkEntity = scene->createEntity(link.name);
+        linkEntity.addComponent<RigidBodyComponent>().bodyName = link.name;
+        linkEntities[link.name] = linkEntity;
+    }
+
+    for (const auto& joint : model.joints) {
+        auto childIt = linkEntities.find(joint.childLink);
+        auto parentIt = linkEntities.find(joint.parentLink);
+        if (childIt == linkEntities.end() || parentIt == linkEntities.end()) continue;
+
+        auto& childTr = childIt->second.getComponent<TransformComponent>();
+        childTr.position = {
+            static_cast<float>(joint.origin.xyz[0]),
+            static_cast<float>(joint.origin.xyz[1]),
+            static_cast<float>(joint.origin.xyz[2])
+        };
+        childTr.rotation = rpyToQuat(joint.origin.rpy[0], joint.origin.rpy[1], joint.origin.rpy[2]);
+        scene->setParent(childIt->second, parentIt->second);
+    }
+
+    auto rootLinkIt = linkEntities.find(rootName);
+    if (rootLinkIt != linkEntities.end()) {
+        scene->setParent(rootLinkIt->second, urdfRootEntity);
+    }
+
+    for (const auto& link : model.links) {
+        for (const auto& visual : link.visuals) {
+            if (visual.geometry.type != NxURDF::GeometryType::Mesh) continue;
+
+            std::string meshPath = NxURDF::resolveMeshPath(visual.geometry.meshFilename, urdfDir);
+            std::string fullMeshPath = ResourceLoader::getBasePath() + meshPath;
+
+            Assimp::Importer importer;
+            importer.SetPropertyInteger(AI_CONFIG_IMPORT_COLLADA_IGNORE_UP_DIRECTION, 1);
+            const aiScene* aScene = importer.ReadFile(fullMeshPath,
+                aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenNormals);
+
+            if (!aScene || aScene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) {
+                NX_CORE_WARN("NxURDF: 无法加载网格 {}: {}", fullMeshPath, importer.GetErrorString());
+                continue;
+            }
+
+            auto linkIt = linkEntities.find(link.name);
+            if (linkIt == linkEntities.end()) continue;
+
+            Entity visualEntity = scene->createEntity(link.name + "_visual");
+            auto& visualTr = visualEntity.getComponent<TransformComponent>();
+            visualTr.position = {
+                static_cast<float>(visual.origin.xyz[0]),
+                static_cast<float>(visual.origin.xyz[1]),
+                static_cast<float>(visual.origin.xyz[2])
+            };
+            visualTr.rotation = rpyToQuat(
+                visual.origin.rpy[0], visual.origin.rpy[1], visual.origin.rpy[2]);
+            scene->setParent(visualEntity, linkIt->second);
+
+            NX_CORE_INFO("NxURDF: processing visual Mesh for Link={}", link.name);
+            processNode(textureManager, aScene->mRootNode, aScene, scene, meshManager, visualEntity, "");
+        }
+    }
+
+    NX_CORE_INFO("NxURDF: 根 Link='{}', 共创建 {} 个 link 实体", rootName, linkEntities.size());
+    return urdfRootEntity;
 }
 
 } // namespace Core

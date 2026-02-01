@@ -29,9 +29,12 @@ struct SerializedEntity {
     bool hasMesh = false;
     MeshComponent mesh;
 
+    bool hasRigidBody = false;
+    RigidBodyComponent rigidBody;
+
     template<class Archive>
     void serialize(Archive& ar) {
-        ar(id, hasTag, tag, hasTransform, transform, hasHierarchy, parent, children, hasCamera, camera, hasMesh, mesh);
+        ar(id, hasTag, tag, hasTransform, transform, hasHierarchy, parent, children, hasCamera, camera, hasMesh, mesh, hasRigidBody, rigidBody);
     }
 };
 
@@ -78,6 +81,10 @@ bool SceneSerializer::serialize(const std::string& filePath) {
             if (reg.all_of<MeshComponent>(entityHandle)) {
                 se.hasMesh = true;
                 se.mesh = reg.get<MeshComponent>(entityHandle);
+            }
+            if (reg.all_of<RigidBodyComponent>(entityHandle)) {
+                se.hasRigidBody = true;
+                se.rigidBody = reg.get<RigidBodyComponent>(entityHandle);
             }
             entities.push_back(se);
         }
@@ -136,6 +143,9 @@ bool SceneSerializer::deserialize(const std::string& filePath) {
             }
             if (se.hasMesh) {
                 reg.emplace<MeshComponent>(handle, se.mesh);
+            }
+            if (se.hasRigidBody) {
+                reg.emplace<RigidBodyComponent>(handle, se.rigidBody);
             }
         }
 

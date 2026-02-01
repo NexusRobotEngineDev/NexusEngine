@@ -19,11 +19,17 @@ class Scene;
 enum class UICommandType : uint8_t {
     Select,
     ToggleExpand,
+    DragFloat,
+    DragDock
 };
 
 struct UICommand {
     UICommandType type;
     uint32_t entityId;
+    char panelId[32];
+    char targetZoneId[32];
+    float x;
+    float y;
 };
 
 template<typename T, size_t Cap>
@@ -64,6 +70,9 @@ public:
     void floatPanel(const std::string& panelId, float x, float y);
     void dockPanel(const std::string& panelId, const std::string& dockZoneId);
     void update(Scene* scene);
+    uint32_t getSelectedEntityId() const {
+        return m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
+    }
     bool saveLayout(const std::string& filePath);
     bool loadLayout(const std::string& filePath);
     void ProcessEvent(Rml::Event& event) override;

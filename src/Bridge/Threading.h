@@ -4,6 +4,7 @@
 #include "Context.h"
 #include "Vk/VK_Renderer.h"
 #include "thirdparty.h"
+#include "Log.h"
 #include <memory>
 
 namespace Nexus {
@@ -79,26 +80,32 @@ private:
     }
 
     void processCommand(const RenderCommand& cmd) {
-        switch (cmd.type) {
-            case RenderCommandType::Draw:
-                if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
-                break;
-            case RenderCommandType::Resize:
-                if (m_renderer) (void)m_renderer->onResize(cmd.width, cmd.height);
-                break;
-            case RenderCommandType::SyncPoint:
-                m_context->sync();
-                m_isAtSyncPoint = true;
-                while (m_syncRequested) {
-                    std::this_thread::yield();
-                }
-                m_isAtSyncPoint = false;
-                break;
-            case RenderCommandType::Shutdown:
-                if (m_renderer) m_renderer->shutdown();
-                break;
-            default:
-                break;
+        try {
+            switch (cmd.type) {
+                case RenderCommandType::Draw:
+                    if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
+                    break;
+                case RenderCommandType::Resize:
+                    if (m_renderer) (void)m_renderer->onResize(cmd.width, cmd.height);
+                    break;
+                case RenderCommandType::SyncPoint:
+                    m_context->sync();
+                    m_isAtSyncPoint = true;
+                    while (m_syncRequested) {
+                        std::this_thread::yield();
+                    }
+                    m_isAtSyncPoint = false;
+                    break;
+                case RenderCommandType::Shutdown:
+                    if (m_renderer) m_renderer->shutdown();
+                    break;
+                default:
+                    break;
+            }
+        } catch (const std::exception& e) {
+            NX_CORE_ERROR("RHITHREAD EXCEPTION: {}", e.what());
+        } catch (...) {
+            NX_CORE_ERROR("RHITHREAD UNKNOWN EXCEPTION");
         }
     }
 

@@ -42,20 +42,67 @@
                         </div>
                     </div>
                     
-                    <h3 style="margin-bottom: 5dp; color:#ffffaa;">Transform</h3>
+                    <h3 style="margin-bottom: 5dp; color:#ffffaa;">Local Transform</h3>
                     <div class="prop-row">
-                        <span class="prop-label">Position X</span>
+                        <span class="prop-label">Pos X</span>
                         <input id="prop-pos-x" type="text" class="prop-value" value="0.0"/>
                     </div>
                     <div class="prop-row">
-                        <span class="prop-label">Position Y</span>
+                        <span class="prop-label">Pos Y</span>
                         <input id="prop-pos-y" type="text" class="prop-value" value="0.0"/>
                     </div>
                     <div class="prop-row">
-                        <span class="prop-label">Position Z</span>
+                        <span class="prop-label">Pos Z</span>
                         <input id="prop-pos-z" type="text" class="prop-value" value="0.0"/>
                     </div>
-                    <!-- 将来可以继续添加 Rotation, Scale -->
+                    <div class="prop-row">
+                        <span class="prop-label">Rot</span>
+                        <span id="prop-rot" class="prop-value" style="background-color: transparent; border-width: 0; color: #bbbbbb; font-size: 11dp;">-</span>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Scale</span>
+                        <span id="prop-scale" class="prop-value" style="background-color: transparent; border-width: 0; color: #bbbbbb; font-size: 11dp;">-</span>
+                    </div>
+
+                    <div style="margin-top: 10dp; padding-top: 5dp; border-top: 1dp #4a4a6a;">
+                        <h3 style="margin-bottom: 5dp; color:#aaddff;">World Transform</h3>
+                        <div class="prop-row">
+                            <span class="prop-label">Pos X</span>
+                            <span id="prop-world-x" class="prop-value" style="background-color: transparent; border-width: 0; color: #88ccff;">-</span>
+                        </div>
+                        <div class="prop-row">
+                            <span class="prop-label">Pos Y</span>
+                            <span id="prop-world-y" class="prop-value" style="background-color: transparent; border-width: 0; color: #88ccff;">-</span>
+                        </div>
+                        <div class="prop-row">
+                            <span class="prop-label">Pos Z</span>
+                            <span id="prop-world-z" class="prop-value" style="background-color: transparent; border-width: 0; color: #88ccff;">-</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 10dp; padding-top: 5dp; border-top: 1dp #4a4a6a;">
+                        <h3 style="margin-bottom: 5dp; color:#ffaadd;">Parent</h3>
+                        <div class="prop-row">
+                            <span class="prop-label">Name</span>
+                            <span id="prop-parent-name" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffaadd;">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="panel-performance" class="panel">
+                <div class="title-bar" drag="drag">
+                    <span class="title-text">性能统计</span>
+                </div>
+                <div class="panel-content" id="performance-content">
+                    <div class="prop-row">
+                        <span class="prop-label">Draw Calls</span>
+                        <span id="prop-draw-calls" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffffff;">0</span>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Triangles</span>
+                        <span id="prop-triangles" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffffff;">0</span>
+                    </div>
                 </div>
             </div>
         </div>

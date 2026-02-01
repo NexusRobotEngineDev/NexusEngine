@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include "Base.h"
 #include "VK_Context.h"
 #include "VK_Swapchain.h"
@@ -117,10 +118,13 @@ private:
     float _pad1[2];
 
     std::array<float, 16> mvp;
+    std::array<float, 4> highlightColor;
 };
 
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+public:
+    std::atomic<uint32_t> m_selectedEntityId{0xFFFFFFFF};
 };
 
 } // namespace Nexus

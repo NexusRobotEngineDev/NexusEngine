@@ -1,5 +1,6 @@
 #include "HierarchySystem.h"
 #include "Components.h"
+#include <cstdio>
 
 namespace Nexus {
 
@@ -16,6 +17,20 @@ void HierarchySystem::update(Registry& registry) {
                 roots.push_back(entity);
             }
         }
+    }
+
+    static int hsLogCounter = 0;
+    if (hsLogCounter++ % 600 == 0) {
+        int nRoots = (int)roots.size();
+        printf("[HierarchyDiag] roots=%d\n", nRoots);
+        for (int i = 0; i < nRoots && i < 5; i++) {
+            auto root = roots[i];
+            int ch = 0;
+            if (registry.has<HierarchyComponent>(root))
+                ch = (int)registry.get<HierarchyComponent>(root).children.size();
+            printf("[HierarchyDiag]   e=%u ch=%d\n", (unsigned)root, ch);
+        }
+        fflush(stdout);
     }
 
     for (auto root : roots) {
