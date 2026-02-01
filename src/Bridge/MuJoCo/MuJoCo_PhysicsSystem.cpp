@@ -39,6 +39,7 @@ Status MuJoCo_PhysicsSystem::loadModel(const std::string& path) {
     }
 
     m_data = mj_makeData(m_model);
+    mj_forward(m_model, m_data);
 
     for (int i = 0; i < m_model->nu; ++i) {
         const char* actuatorName = mj_id2name(m_model, mjOBJ_ACTUATOR, i);
@@ -69,6 +70,11 @@ void MuJoCo_PhysicsSystem::shutdown() {
 
 void MuJoCo_PhysicsSystem::update(float deltaTime) {
     if (m_model && m_data) {
+        {
+            std::lock_guard<std::mutex> lock(m_cmdMutex);
+            if (m_pendingCommands.empty()) return;
+        }
+
         m_timeStepAccumulator += deltaTime;
 
         while (m_timeStepAccumulator >= m_model->opt.timestep) {

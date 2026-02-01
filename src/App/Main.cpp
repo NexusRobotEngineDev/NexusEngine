@@ -402,9 +402,9 @@ void RunMainLoop() {
                     forwardX /= fLen; forwardY /= fLen; forwardZ /= fLen;
                 }
 
-                float rightX = forwardY * 0.0f - forwardZ * 1.0f;
-                float rightY = forwardZ * 0.0f - forwardX * 0.0f;
-                float rightZ = forwardX * 1.0f - forwardY * 0.0f;
+                float rightX = -forwardZ;
+                float rightY = 0.0f;
+                float rightZ = forwardX;
 
                 float rLen = std::sqrt(rightX*rightX + rightY*rightY + rightZ*rightZ);
                 if (rLen > 0.0001f) {
@@ -471,8 +471,8 @@ void RunMainLoop() {
                 if (g_rosBridge && g_physicsSystem) {
                     g_rosBridge->applyIncomingCommands(g_physicsSystem);
                 }
-                HierarchySystem::update(g_scene->getRegistry());
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
+                HierarchySystem::update(g_scene->getRegistry());
                 if (g_rosBridge) {
                     g_rosBridge->publishReplicas(g_scene->getRegistry());
                 }

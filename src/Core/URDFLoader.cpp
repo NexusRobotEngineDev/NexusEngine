@@ -6,6 +6,7 @@
 #include <sstream>
 #include <cmath>
 #include <set>
+#include "../Bridge/Log.h"
 
 namespace NxURDF {
 
@@ -106,6 +107,10 @@ static Visual parseVisual(const tinyxml2::XMLElement* elem) {
     v.geometry = parseGeometry(elem->FirstChildElement("geometry"));
     if (auto* mat = elem->FirstChildElement("material"))
         v.material = parseMaterial(mat);
+
+    if (v.geometry.type == GeometryType::Mesh) {
+        NX_CORE_INFO("NxURDF Debug: Parsed visual mesh: {}", v.geometry.meshFilename);
+    }
     return v;
 }
 
