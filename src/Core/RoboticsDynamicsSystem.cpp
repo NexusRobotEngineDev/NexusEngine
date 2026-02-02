@@ -1,91 +1,99 @@
 #include "RoboticsDynamicsSystem.h"
 #include "Components.h"
 #include "../Bridge/Log.h"
-#include <cmath>
 
 namespace Nexus {
 namespace Core {
 
-
-static std::array<float, 16> buildWorldMatrixYUp(
-    const double* mjPos, const double* mjQuat)
-{
-    float px = (float) mjPos[0];
-    float py = (float) mjPos[2];
-    float pz = (float)-mjPos[1];
-
-    float qw = (float) mjQuat[0];
-    float qx = (float) mjQuat[1];
-    float qy = (float) mjQuat[3];
-    float qz = (float)-mjQuat[2];
-
-    float len = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
-    if (len > 1e-6f) { qw /= len; qx /= len; qy /= len; qz /= len; }
-
+static std::array<float, 16> buildZUpMatrix(const double* pos, const double* quat) {
+    float px = (float)pos[0], py = (float)pos[1], pz = (float)pos[2];
+    float qw = (float)quat[0], qx = (float)quat[1], qy = (float)quat[2], qz = (float)quat[3];
     float xx = qx*qx, yy = qy*qy, zz = qz*qz;
     float xy = qx*qy, xz = qx*qz, yz = qy*qz;
     float wx = qw*qx, wy = qw*qy, wz = qw*qz;
 
     std::array<float, 16> m{};
-    m[0]  = 1 - 2*(yy + zz);  m[4]  = 2*(xy - wz);     m[8]  = 2*(xz + wy);     m[12] = px;
-    m[1]  = 2*(xy + wz);      m[5]  = 1 - 2*(xx + zz); m[9]  = 2*(yz - wx);     m[13] = py;
-    m[2]  = 2*(xz - wy);      m[6]  = 2*(yz + wx);     m[10] = 1 - 2*(xx + yy); m[14] = pz;
-    m[3]  = 0;                 m[7]  = 0;                m[11] = 0;                m[15] = 1;
+    m[0]  = 1 - 2*(yy + zz); m[4]  = 2*(xy - wz);     m[8]  = 2*(xz + wy);     m[12] = px;
+    m[1]  = 2*(xy + wz);     m[5]  = 1 - 2*(xx + zz); m[9]  = 2*(yz - wx);     m[13] = py;
+    m[2]  = 2*(xz - wy);     m[6]  = 2*(yz + wx);     m[10] = 1 - 2*(xx + yy); m[14] = pz;
+    m[3]  = 0;               m[7]  = 0;               m[11] = 0;               m[15] = 1;
     return m;
 }
 
+static std::array<float, 16> multiplyMat4(const std::array<float, 16>& a, const std::array<float, 16>& b) {
+    std::array<float, 16> r{};
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            float sum = 0.f;
+            for (int k = 0; k < 4; ++k) sum += a[row + k*4] * b[k + col*4];
+            r[row + col*4] = sum;
+        }
+    }
+    return r;
+}
+
+static void propagateZUp(entt::registry& reg, entt::entity entity, const std::array<float, 16>& parentMatZUp) {
+    if (!reg.all_of<HierarchyComponent>(entity)) return;
+    auto& hier = reg.get<HierarchyComponent>(entity);
+    for (auto child : hier.children) {
+        if (reg.all_of<RigidBodyComponent>(child)) continue;
+        if (reg.all_of<TransformComponent>(child)) {
+            auto& childTr = reg.get<TransformComponent>(child);
+            auto childLocalZUp = childTr.computeLocalMatrix();
+            childTr.worldMatrix = multiplyMat4(parentMatZUp, childLocalZUp);
+            propagateZUp(reg, child, childTr.worldMatrix);
+        }
+    }
+}
+
+static void convertTreeToYUp(entt::registry& reg, entt::entity entity, const std::array<float, 16>& yUpConversion) {
+    if (reg.all_of<TransformComponent>(entity)) {
+        auto& tr = reg.get<TransformComponent>(entity);
+        tr.worldMatrix = multiplyMat4(yUpConversion, tr.worldMatrix);
+    }
+
+    if (reg.all_of<HierarchyComponent>(entity)) {
+        for (auto child : reg.get<HierarchyComponent>(entity).children) {
+            convertTreeToYUp(reg, child, yUpConversion);
+        }
+    }
+}
+
 void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsSystem) {
-    static int s_callCount = 0;
-    if (++s_callCount == 1) {
-        printf("[RobDyn_ENTRY] FIRST CALL: physicsSystem=%p\n", (void*)physicsSystem);
-        fflush(stdout);
-        NX_CORE_INFO("[RobDyn_ENTRY] 首次调用 physicsSystem={}", (void*)physicsSystem);
-    }
     if (!physicsSystem) return;
+    auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+    if (!mj || !mj->m_model || !mj->m_data) return;
 
-    auto* mjPhysics = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+    auto& reg = registry.getInternal();
+    auto view = reg.view<TransformComponent, RigidBodyComponent>();
 
-    static bool s_diag = false;
-    if (!s_diag) {
-        s_diag = true;
-        if (!mjPhysics) {
-            NX_CORE_ERROR("[RobDyn] dynamic_cast 失败，physicsSystem 类型不是 MuJoCo_PhysicsSystem");
-            return;
-        }
-        auto view2 = registry.view<RigidBodyComponent>();
-        int total = 0;
-        for (auto e : view2) { total++; }
-        NX_CORE_INFO("[RobDyn] 实体总数(RigidBodyComponent): {}, model={}, data={}",
-            total, (void*)mjPhysics->m_model, (void*)mjPhysics->m_data);
-
-        if (mjPhysics->m_model) {
-            auto view3 = registry.view<TransformComponent, RigidBodyComponent>();
-            for (auto entity : view3) {
-                const auto& rb = view3.get<RigidBodyComponent>(entity);
-                int bid = mj_name2id(mjPhysics->m_model, mjOBJ_BODY, rb.bodyName.c_str());
-                if (bid < 0)
-                    NX_CORE_WARN("[RobDyn] 未找到 body: '{}'", rb.bodyName);
-                else
-                    NX_CORE_INFO("[RobDyn] 匹配 body: '{}' → id={}", rb.bodyName, bid);
-            }
-        }
-    }
-
-    if (!mjPhysics || !mjPhysics->m_model || !mjPhysics->m_data) return;
-
-    auto view = registry.view<TransformComponent, RigidBodyComponent>();
+    entt::entity rootEntity = entt::null;
 
     for (auto entity : view) {
         auto& transform = view.get<TransformComponent>(entity);
-        const auto& rigidBody = view.get<RigidBodyComponent>(entity);
+        const auto& rb = view.get<RigidBodyComponent>(entity);
 
-        int bodyId = mj_name2id(mjPhysics->m_model, mjOBJ_BODY, rigidBody.bodyName.c_str());
+        int bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, (rb.bodyName == "base") ? "base_link" : rb.bodyName.c_str());
         if (bodyId < 0) continue;
 
-        const double* pos  = mjPhysics->m_data->xpos  + 3 * bodyId;
-        const double* quat = mjPhysics->m_data->xquat + 4 * bodyId;
+        if (rb.bodyName == "base") rootEntity = entity;
 
-        transform.worldMatrix = buildWorldMatrixYUp(pos, quat);
+        const double* pos = mj->m_data->xpos + 3 * bodyId;
+        const double* quat = mj->m_data->xquat + 4 * bodyId;
+
+        transform.worldMatrix = buildZUpMatrix(pos, quat);
+
+        propagateZUp(reg, entity, transform.worldMatrix);
+    }
+
+    if (rootEntity != entt::null) {
+        std::array<float, 16> zToY = {
+            1,  0,  0,  0,
+            0,  0, -1,  0,
+            0,  1,  0,  0,
+            0,  0,  0,  1
+        };
+        convertTreeToYUp(reg, rootEntity, zToY);
     }
 }
 

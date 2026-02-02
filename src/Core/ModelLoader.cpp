@@ -21,12 +21,7 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
         prefix = engineScene->getRegistry().get<TagComponent>(parentEntity.getHandle()).name + "_";
     }
 
-    Entity nodeEntity;
-    if (parentEntity.isValid() && node == aScene->mRootNode) {
-        nodeEntity = parentEntity;
-    } else {
-        nodeEntity = engineScene->createEntity(prefix + node->mName.C_Str());
-    }
+    Entity nodeEntity = engineScene->createEntity(prefix + node->mName.C_Str());
 
     auto& transform = nodeEntity.getComponent<TransformComponent>();
 
@@ -44,7 +39,7 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
                  nodeEntity.getComponent<TagComponent>().name, position.x, position.y, position.z,
                  rotationQuat.x, rotationQuat.y, rotationQuat.z, rotationQuat.w);
 
-    if (parentEntity.isValid() && nodeEntity != parentEntity) {
+    if (parentEntity.isValid()) {
         engineScene->setParent(nodeEntity, parentEntity);
     }
 

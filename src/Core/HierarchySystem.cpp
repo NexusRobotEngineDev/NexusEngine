@@ -42,6 +42,17 @@ void HierarchySystem::updateNode(Registry& registry, entt::entity entity, const 
     if (!registry.has<TransformComponent>(entity)) return;
 
     auto& transform = registry.get<TransformComponent>(entity);
+
+    if (registry.has<RigidBodyComponent>(entity)) {
+        if (registry.has<HierarchyComponent>(entity)) {
+            auto& hier = registry.get<HierarchyComponent>(entity);
+            for (auto child : hier.children) {
+                updateNode(registry, child, &transform.worldMatrix);
+            }
+        }
+        return;
+    }
+
     auto localMatrix = transform.computeLocalMatrix();
 
     if (parentWorldMatrix) {
