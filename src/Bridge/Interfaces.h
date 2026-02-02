@@ -104,6 +104,11 @@ public:
      * @brief 为指定名称的关节施加 PD 控制与前馈力矩
      */
     virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) = 0;
+
+    /**
+     * @brief 返回所有 actuator 名称列表（按 ID 顺序）
+     */
+    virtual std::vector<std::string> getActuatorNames() const = 0;
 };
 
 /**

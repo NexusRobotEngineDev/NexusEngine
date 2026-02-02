@@ -23,6 +23,7 @@ public:
 
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) override;
     virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) override;
+    virtual std::vector<std::string> getActuatorNames() const override;
 
     mjModel* m_model = nullptr;
     mjData*  m_data  = nullptr;

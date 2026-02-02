@@ -140,4 +140,18 @@ bool MuJoCo_PhysicsSystem::getBodyTransform(const std::string& name, std::array<
     return true;
 }
 
+std::vector<std::string> MuJoCo_PhysicsSystem::getActuatorNames() const {
+    std::vector<std::pair<int, std::string>> sorted;
+    for (const auto& [name, id] : m_actuatorName2Id) {
+        sorted.push_back({id, name});
+    }
+    std::sort(sorted.begin(), sorted.end());
+    std::vector<std::string> result;
+    result.reserve(sorted.size());
+    for (const auto& [id, name] : sorted) {
+        result.push_back(name);
+    }
+    return result;
+}
+
 } // namespace Nexus

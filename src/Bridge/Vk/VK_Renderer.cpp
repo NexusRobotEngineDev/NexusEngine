@@ -380,7 +380,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
     colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    colorAttachment.clearValue = vk::ClearValue(std::array<float, 4>{0.1f, 0.1f, 0.4f, 1.0f});
+    colorAttachment.clearValue = vk::ClearValue(std::array<float, 4>{0.12f, 0.14f, 0.22f, 1.0f});
 
     vk::RenderingAttachmentInfo depthAttachment;
     depthAttachment.imageView = static_cast<VK_Swapchain*>(m_swapchain)->getDepthImageView();
