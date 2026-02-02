@@ -190,5 +190,26 @@ void RosBridgeSystem::publishReplicas(Registry& registry) {
     }
 }
 
+void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
+    if (!m_impl->initialized || !physicsSystem) return;
+
+    static auto lastPublishTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPublishTime).count();
+
+    if (elapsed < 2000) return;
+    lastPublishTime = now;
+
+    auto actuators = physicsSystem->getActuatorNames();
+    json j;
+    j["type"] = "model_info";
+    j["actuators"] = actuators;
+    j["num_actuators"] = actuators.size();
+
+    std::string payload = j.dump();
+    m_impl->publisher->send(zmq::message_t("model_info", 10), zmq::send_flags::sndmore);
+    m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
+}
+
 } // namespace Core
 } // namespace Nexus

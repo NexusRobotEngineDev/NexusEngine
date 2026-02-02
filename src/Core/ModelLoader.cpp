@@ -16,6 +16,13 @@ namespace Nexus {
 namespace Core {
 
 static void processNode(TextureManager* textureManager, aiNode* node, const aiScene* aScene, Scene* engineScene, MeshManager* meshManager, Entity parentEntity, const std::string& directory) {
+    std::string nodeName = node->mName.C_Str();
+    if (node->mNumMeshes == 0 && node->mNumChildren == 0 &&
+        (nodeName.find("Camera") != std::string::npos ||
+         nodeName.find("Light") != std::string::npos)) {
+        return;
+    }
+
     std::string prefix = "";
     if (parentEntity.isValid() && engineScene->getRegistry().has<TagComponent>(parentEntity.getHandle())) {
         prefix = engineScene->getRegistry().get<TagComponent>(parentEntity.getHandle()).name + "_";
@@ -276,6 +283,28 @@ Entity ModelLoader::loadURDF(TextureManager* textureManager, Scene* scene, MeshM
     auto rootLinkIt = linkEntities.find(rootName);
     if (rootLinkIt != linkEntities.end()) {
         scene->setParent(rootLinkIt->second, urdfRootEntity);
+
+        std::unordered_map<std::string, double> linkZAccum;
+        linkZAccum[rootName] = 0.0;
+        for (int pass = 0; pass < 10; ++pass) {
+            for (const auto& joint : model.joints) {
+                auto parentZ = linkZAccum.find(joint.parentLink);
+                if (parentZ != linkZAccum.end()) {
+                    double childZ = parentZ->second + joint.origin.xyz[2];
+                    auto it = linkZAccum.find(joint.childLink);
+                    if (it == linkZAccum.end() || childZ < it->second)
+                        linkZAccum[joint.childLink] = childZ;
+                }
+            }
+        }
+        double minZ = 0.0;
+        for (const auto& [name, z] : linkZAccum)
+            if (z < minZ) minZ = z;
+
+        float standingHeight = static_cast<float>(-minZ);
+        auto& rootLinkTr = rootLinkIt->second.getComponent<TransformComponent>();
+        rootLinkTr.position[1] = -standingHeight;
+        NX_CORE_INFO("NxURDF: 自动站立高度 = {:.3f}m (最低Z = {:.3f})", standingHeight, minZ);
     }
 
     for (const auto& link : model.links) {

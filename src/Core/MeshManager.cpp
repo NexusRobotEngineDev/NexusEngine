@@ -14,9 +14,9 @@ MeshManager::~MeshManager() {
  */
 Status MeshManager::initialize() {
     NX_ASSERT(m_context, "Context must be valid");
-    m_vertexBuffer = m_context->createBuffer(64 * 1024 * 1024, 0x0082, 0x0006);
+    m_vertexBuffer = m_context->createBuffer(128 * 1024 * 1024, 0x0082, 0x0006);
 
-    m_indexBuffer = m_context->createBuffer(64 * 1024 * 1024, 0x0042, 0x0006);
+    m_indexBuffer = m_context->createBuffer(128 * 1024 * 1024, 0x0042, 0x0006);
     return OkStatus();
 }
 

@@ -40,6 +40,11 @@ public:
      */
     void applyIncomingCommands(IPhysicsSystem* physicsSystem);
 
+    /**
+     * @brief 广播模型信息（actuator 列表），让 bridge 端自动发现
+     */
+    void publishModelInfo(IPhysicsSystem* physicsSystem);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
