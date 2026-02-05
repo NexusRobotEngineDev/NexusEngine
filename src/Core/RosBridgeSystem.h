@@ -41,9 +41,16 @@ public:
     void applyIncomingCommands(IPhysicsSystem* physicsSystem);
 
     /**
-     * @brief 广播模型信息（actuator 列表），让 bridge 端自动发现
+     * @brief 广播模型信息（actuator 列表 + robot_list），让 bridge 端自动发现
      */
     void publishModelInfo(IPhysicsSystem* physicsSystem);
+
+    /**
+     * @brief 设置当前机器人的标识信息
+     * @param robotId 实例 ID (如 "go2_0")
+     * @param robotName 模型名 (如 "unitree_go2"，用于 Bridge 匹配驱动)
+     */
+    void setRobotInfo(const std::string& robotId, const std::string& robotName);
 
 private:
     struct Impl;

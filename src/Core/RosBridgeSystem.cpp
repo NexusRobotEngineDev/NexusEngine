@@ -24,18 +24,15 @@ struct MotorCmd {
 
 struct RosBridgeSystem::Impl {
     std::unique_ptr<zmq::context_t> context;
-
-    std::unique_ptr<zmq::socket_t> publisher;
-
-    std::unique_ptr<zmq::socket_t> cmdReceiver;
-
+    std::unique_ptr<zmq::socket_t>  publisher;
+    std::unique_ptr<zmq::socket_t>  cmdReceiver;
     std::thread recvThread;
     std::atomic<bool> running{false};
-
     std::mutex cmdMutex;
     std::vector<MotorCmd> latestCmds;
-
     bool initialized = false;
+    std::string robotId   = "robot_0";
+    std::string robotName = "unknown";
 
     void startRecvThread() {
         running = true;
@@ -178,14 +175,11 @@ void RosBridgeSystem::publishReplicas(Registry& registry) {
         j_state["bodies"].push_back(j_body);
     }
 
-    json j_motors;
-    j_motors["type"]   = "state";
-    j_motors["motors"] = json::array();
-
-
     if (!j_state["bodies"].empty()) {
+        j_state["robot_id"] = m_impl->robotId;
         std::string payload = j_state.dump();
-        m_impl->publisher->send(zmq::message_t("state", 5), zmq::send_flags::sndmore);
+        std::string topic = "state:" + m_impl->robotId;
+        m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
         m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
     }
 }
@@ -201,6 +195,7 @@ void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
     lastPublishTime = now;
 
     auto actuators = physicsSystem->getActuatorNames();
+
     json j;
     j["type"] = "model_info";
     j["actuators"] = actuators;
@@ -209,6 +204,24 @@ void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
     std::string payload = j.dump();
     m_impl->publisher->send(zmq::message_t("model_info", 10), zmq::send_flags::sndmore);
     m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
+
+    json jList;
+    jList["robots"] = json::array();
+    json robot;
+    robot["robot_id"]   = m_impl->robotId;
+    robot["robot_name"] = m_impl->robotName;
+    robot["joints"]     = actuators;
+    jList["robots"].push_back(robot);
+
+    std::string listPayload = jList.dump();
+    m_impl->publisher->send(zmq::message_t("robot_list", 10), zmq::send_flags::sndmore);
+    m_impl->publisher->send(zmq::message_t(listPayload.data(), listPayload.size()), zmq::send_flags::none);
+}
+
+void RosBridgeSystem::setRobotInfo(const std::string& robotId, const std::string& robotName) {
+    m_impl->robotId = robotId;
+    m_impl->robotName = robotName;
+    NX_CORE_INFO("RosBridgeSystem 机器人: id={}, name={}", robotId, robotName);
 }
 
 } // namespace Core
