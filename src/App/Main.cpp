@@ -208,6 +208,7 @@ Status InitializeEngine(const EngineConfig& config) {
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
 #endif
 
+    std::string physicsPath;
     g_physicsSystem = new PhysicsSystem();
     auto physicsStatus = g_physicsSystem->initialize();
     if (!physicsStatus.ok()) {
@@ -215,7 +216,7 @@ Status InitializeEngine(const EngineConfig& config) {
         delete g_physicsSystem;
         g_physicsSystem = nullptr;
     } else {
-        std::string physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
+        physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
         auto loadStatus = g_physicsSystem->loadModel(physicsPath);
         if (!loadStatus.ok()) {
             NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
@@ -227,6 +228,22 @@ Status InitializeEngine(const EngineConfig& config) {
     g_rosBridge = std::make_unique<RosBridgeSystem>();
     if (auto status = g_rosBridge->initialize(); !status.ok()) {
         NX_CORE_WARN("Failed to start ROS Bridge: {}", status.message());
+    }
+
+    if (g_rosBridge && g_physicsSystem) {
+        std::string modelDir = physicsPath;
+        auto slashPos = modelDir.find_last_of("/\\");
+        if (slashPos != std::string::npos) modelDir = modelDir.substr(0, slashPos);
+        auto dirSlash = modelDir.find_last_of("/\\");
+        std::string folderName = (dirSlash != std::string::npos) ? modelDir.substr(dirSlash + 1) : modelDir;
+
+        std::string robotName = folderName;
+        auto underscorePos = robotName.find('_');
+        if (underscorePos != std::string::npos) {
+            robotName = "unitree_" + robotName.substr(0, underscorePos);
+        }
+
+        g_rosBridge->setRobotInfo(folderName + "_0", robotName);
     }
 
     return OkStatus();

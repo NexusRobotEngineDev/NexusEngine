@@ -1,0 +1,15 @@
+{
+  "name": "go2_training",
+  "camera": {
+    "position": [1.2, 0.4, 1.8]
+  },
+  "robot": {
+    "urdf": "Models/go2/go2_description.urdf",
+    "physics": "Scenes/go2_mujoco/scene.xml"
+  },
+  "ground": {
+    "size": [30, 30],
+    "color": [0.25, 0.25, 0.28, 1.0]
+  },
+  "objects": []
+}
