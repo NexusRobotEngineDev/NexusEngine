@@ -41,20 +41,12 @@ jobs:
         $pkgName = "NexusEngine-v${{ env.VERSION }}-windows-x64"
         $pkgDir = "build/$pkgName"
         New-Item -ItemType Directory -Path $pkgDir -Force
-        
-        # 拷贝主程序
+
         Copy-Item "build/Release/NexusApp.exe" "$pkgDir/"
-        
-        # 拷贝动态库
         $dllFiles = Get-ChildItem "build/Release/*.dll" -ErrorAction SilentlyContinue
         if ($dllFiles) { Copy-Item $dllFiles "$pkgDir/" }
-        
-        # 拷贝 Data 目录
-        if (Test-Path "build/Data") {
-          Copy-Item -Recurse "build/Data" "$pkgDir/Data"
-        }
-        
-        # 打包
+        if (Test-Path "build/Data") { Copy-Item -Recurse "build/Data" "$pkgDir/Data" }
+
         Compress-Archive -Path "$pkgDir" -DestinationPath "build/$pkgName.zip"
         echo "ARTIFACT_PATH=build/$pkgName.zip" >> $env:GITHUB_ENV
         echo "ARTIFACT_NAME=$pkgName" >> $env:GITHUB_ENV
@@ -71,6 +63,9 @@ jobs:
       image: ubuntu:20.04
     env:
       DEBIAN_FRONTEND: noninteractive
+      LANG: zh_CN.UTF-8
+      LANGUAGE: zh_CN:zh
+      LC_ALL: zh_CN.UTF-8
     steps:
     - name: Install System Dependencies
       run: |
@@ -78,7 +73,8 @@ jobs:
         apt-get install -y software-properties-common gnupg ca-certificates locales wget
         add-apt-repository ppa:ubuntu-toolchain-r/test -y
         add-apt-repository ppa:deadsnakes/ppa -y
-        apt-get update && apt-get upgrade -y
+        apt-get update
+        apt-get upgrade -y
         apt-get install -y \
           git gcc-13 g++-13 binutils ninja-build \
           make curl zip unzip tar pkg-config perl \
@@ -96,6 +92,10 @@ jobs:
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 100
         python3 -m pip install jinja2
         locale-gen zh_CN.UTF-8
+        gcc --version
+        ld --version
+        python3 --version
+        pkg-config --version
 
     - name: Install CMake 3.30
       run: |
@@ -103,6 +103,7 @@ jobs:
         tar xzf cmake-3.30.0-linux-x86_64.tar.gz -C /opt
         ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/cmake /usr/local/bin/cmake
         ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/ctest /usr/local/bin/ctest
+        cmake --version
 
     - uses: actions/checkout@v4
 
@@ -110,6 +111,7 @@ jobs:
       run: |
         git clone https://github.com/microsoft/vcpkg.git
         ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+        echo "VCPKG_ROOT=$PWD/vcpkg" >> $GITHUB_ENV
 
     - name: Configure CMake
       run: cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-linux-static
@@ -125,34 +127,31 @@ jobs:
         PKG_NAME="NexusEngine-v${{ env.VERSION }}-linux-x64"
         PKG_DIR="build/${PKG_NAME}"
         mkdir -p "${PKG_DIR}/lib"
-        
-        # 主程序
+
         cp build/NexusApp "${PKG_DIR}/"
         chmod +x "${PKG_DIR}/NexusApp"
-        
-        # 动态库
+
         VCPKG_LIB="build/vcpkg_installed/x64-linux-static/lib"
-        [ -f "${VCPKG_LIB}/libvulkan.so.1" ] && cp "${VCPKG_LIB}/libvulkan.so.1" "${PKG_DIR}/lib/"
-        [ -f "${VCPKG_LIB}/libmujoco.so.3.2.7" ] && cp -L "${VCPKG_LIB}/libmujoco.so.3.2.7" "${PKG_DIR}/lib/" && ln -sf libmujoco.so.3.2.7 "${PKG_DIR}/lib/libmujoco.so"
-        
-        # GCC 13 libstdc++
+        [ -f "${VCPKG_LIB}/libvulkan.so.1" ] && cp "${VCPKG_LIB}/libvulkan.so.1" "${PKG_DIR}/lib/" || true
+        if [ -f "${VCPKG_LIB}/libmujoco.so.3.2.7" ]; then
+          cp -L "${VCPKG_LIB}/libmujoco.so.3.2.7" "${PKG_DIR}/lib/"
+          ln -sf libmujoco.so.3.2.7 "${PKG_DIR}/lib/libmujoco.so"
+        fi
+
         GCC13_LIB=$(gcc-13 -print-file-name=libstdc++.so.6 2>/dev/null || echo "")
-        [ -n "$GCC13_LIB" ] && [ -f "$GCC13_LIB" ] && cp -L "$GCC13_LIB" "${PKG_DIR}/lib/"
-        
-        # Data
+        [ -n "$GCC13_LIB" ] && [ -f "$GCC13_LIB" ] && cp -L "$GCC13_LIB" "${PKG_DIR}/lib/" || true
+
         [ -d "build/Data" ] && cp -r build/Data "${PKG_DIR}/Data"
-        
-        # 启动脚本
-        cat > "${PKG_DIR}/run.sh" << 'RUNEOF'
+
+        cat > "${PKG_DIR}/run.sh" << 'EOF'
         #!/bin/bash
         SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
         export LD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${LD_LIBRARY_PATH}"
         exec "${SCRIPT_DIR}/NexusApp" "$@"
-        RUNEOF
+        EOF
         chmod +x "${PKG_DIR}/run.sh"
-        
-        # 打包
-        (cd build && tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}/")
+
+        cd build && tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}/"
         echo "ARTIFACT_PATH=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
         echo "ARTIFACT_NAME=${PKG_NAME}" >> $GITHUB_ENV
 
