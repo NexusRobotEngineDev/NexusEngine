@@ -1,0 +1,163 @@
+name: Release Package
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.2.0)'
+        required: false
+        default: ''
+
+env:
+  VERSION: ${{ github.event.inputs.version || '0.1.0' }}
+
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Restore artifacts, or setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: ${{ github.workspace }}/vcpkg
+        vcpkgJsonGlob: 'vcpkg.json'
+        vcpkgConfigurationJsonGlob: 'vcpkg-configuration.json'
+
+    - name: Configure CMake
+      run: cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+    - name: Build
+      run: cmake --build build --config Release
+
+    - name: Test
+      run: ctest --test-dir build -C Release --output-on-failure
+
+    - name: Package
+      shell: pwsh
+      run: |
+        $pkgName = "NexusEngine-v${{ env.VERSION }}-windows-x64"
+        $pkgDir = "build/$pkgName"
+        New-Item -ItemType Directory -Path $pkgDir -Force
+        
+        # 拷贝主程序
+        Copy-Item "build/Release/NexusApp.exe" "$pkgDir/"
+        
+        # 拷贝动态库
+        $dllFiles = Get-ChildItem "build/Release/*.dll" -ErrorAction SilentlyContinue
+        if ($dllFiles) { Copy-Item $dllFiles "$pkgDir/" }
+        
+        # 拷贝 Data 目录
+        if (Test-Path "build/Data") {
+          Copy-Item -Recurse "build/Data" "$pkgDir/Data"
+        }
+        
+        # 打包
+        Compress-Archive -Path "$pkgDir" -DestinationPath "build/$pkgName.zip"
+        echo "ARTIFACT_PATH=build/$pkgName.zip" >> $env:GITHUB_ENV
+        echo "ARTIFACT_NAME=$pkgName" >> $env:GITHUB_ENV
+
+    - name: Upload Windows Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}
+        path: ${{ env.ARTIFACT_PATH }}
+
+  package-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+    - name: Install System Dependencies
+      run: |
+        apt-get update
+        apt-get install -y software-properties-common gnupg ca-certificates locales wget
+        add-apt-repository ppa:ubuntu-toolchain-r/test -y
+        add-apt-repository ppa:deadsnakes/ppa -y
+        apt-get update && apt-get upgrade -y
+        apt-get install -y \
+          git gcc-13 g++-13 binutils ninja-build \
+          make curl zip unzip tar pkg-config perl \
+          autoconf automake libtool gperf \
+          python3.9 python3.9-dev python3.9-venv python3.9-distutils python3-pip \
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libxext-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+          libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
+          mesa-vulkan-drivers libvulkan-dev \
+          libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+          libmount-dev libcap-dev libglu1-mesa-dev xorg-dev \
+          libsystemd-dev libcryptsetup-dev libgcrypt20-dev liblzma-dev liblz4-dev libzstd-dev \
+          libacl1-dev libkmod-dev libblkid-dev libseccomp-dev libpam0g-dev
+        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
+        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 100
+        python3 -m pip install jinja2
+        locale-gen zh_CN.UTF-8
+
+    - name: Install CMake 3.30
+      run: |
+        wget -q https://github.com/Kitware/CMake/releases/download/v3.30.0/cmake-3.30.0-linux-x86_64.tar.gz
+        tar xzf cmake-3.30.0-linux-x86_64.tar.gz -C /opt
+        ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/cmake /usr/local/bin/cmake
+        ln -sf /opt/cmake-3.30.0-linux-x86_64/bin/ctest /usr/local/bin/ctest
+
+    - uses: actions/checkout@v4
+
+    - name: Setup VCPKG
+      run: |
+        git clone https://github.com/microsoft/vcpkg.git
+        ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+    - name: Configure CMake
+      run: cmake -S . -B build -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-linux-static
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Test
+      run: ctest --test-dir build --output-on-failure
+
+    - name: Package
+      run: |
+        PKG_NAME="NexusEngine-v${{ env.VERSION }}-linux-x64"
+        PKG_DIR="build/${PKG_NAME}"
+        mkdir -p "${PKG_DIR}/lib"
+        
+        # 主程序
+        cp build/NexusApp "${PKG_DIR}/"
+        chmod +x "${PKG_DIR}/NexusApp"
+        
+        # 动态库
+        VCPKG_LIB="build/vcpkg_installed/x64-linux-static/lib"
+        [ -f "${VCPKG_LIB}/libvulkan.so.1" ] && cp "${VCPKG_LIB}/libvulkan.so.1" "${PKG_DIR}/lib/"
+        [ -f "${VCPKG_LIB}/libmujoco.so.3.2.7" ] && cp -L "${VCPKG_LIB}/libmujoco.so.3.2.7" "${PKG_DIR}/lib/" && ln -sf libmujoco.so.3.2.7 "${PKG_DIR}/lib/libmujoco.so"
+        
+        # GCC 13 libstdc++
+        GCC13_LIB=$(gcc-13 -print-file-name=libstdc++.so.6 2>/dev/null || echo "")
+        [ -n "$GCC13_LIB" ] && [ -f "$GCC13_LIB" ] && cp -L "$GCC13_LIB" "${PKG_DIR}/lib/"
+        
+        # Data
+        [ -d "build/Data" ] && cp -r build/Data "${PKG_DIR}/Data"
+        
+        # 启动脚本
+        cat > "${PKG_DIR}/run.sh" << 'RUNEOF'
+        #!/bin/bash
+        SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+        export LD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${LD_LIBRARY_PATH}"
+        exec "${SCRIPT_DIR}/NexusApp" "$@"
+        RUNEOF
+        chmod +x "${PKG_DIR}/run.sh"
+        
+        # 打包
+        (cd build && tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}/")
+        echo "ARTIFACT_PATH=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
+        echo "ARTIFACT_NAME=${PKG_NAME}" >> $GITHUB_ENV
+
+    - name: Upload Linux Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}
+        path: ${{ env.ARTIFACT_PATH }}
