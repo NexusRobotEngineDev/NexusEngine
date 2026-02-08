@@ -6,6 +6,7 @@
 #include "PhysicsThread.h"
 #include "ResourceLoader.h"
 #include <cmath>
+#include <filesystem>
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -26,6 +27,8 @@
 
 using namespace Nexus;
 using namespace Nexus::Core;
+
+std::string g_sceneOverridePath;
 
 namespace {
 WindowPtr g_window = nullptr;
@@ -193,7 +196,7 @@ Status InitializeEngine(const EngineConfig& config) {
     g_textureManager = std::make_unique<TextureManager>(vkContext);
 #endif
 
-    std::string scenePath = "Data/Scenes/default_scene.json";
+    std::string scenePath = g_sceneOverridePath.empty() ? "Data/Scenes/default_scene.json" : g_sceneOverridePath;
     auto configResult = SceneLoader::parseSceneFile(scenePath);
     if (!configResult.ok()) {
         NX_CORE_WARN("场景文件加载失败: {}，使用默认配置", configResult.status().message());
@@ -474,15 +477,45 @@ int main(int argc, char* argv[]) {
     Log::info("Nexus Engine Starting...");
 
     EngineConfig config;
+    std::string sceneArg;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--no-validation") {
             config.enableValidationLayers = false;
+        } else if (arg == "--scene" && i + 1 < argc) {
+            sceneArg = argv[++i];
         }
     }
 
     if (auto status = ResourceLoader::initialize(); !status.ok()) {
         Log::warn("ResourceLoader failed to detect base path: {}", status.message());
+    }
+
+    {
+        std::string scenesDir = ResourceLoader::getBasePath() + "Data/Scenes";
+        Log::info("可用场景:");
+        try {
+            for (auto& entry : std::filesystem::directory_iterator(scenesDir)) {
+                if (entry.path().extension() == ".json") {
+                    std::string stem = entry.path().stem().string();
+                    std::string displayName = stem;
+                    auto pos = displayName.find("_scene");
+                    if (pos != std::string::npos) displayName = displayName.substr(0, pos);
+                    Log::info("  --scene {}  ({})", displayName, entry.path().filename().string());
+                }
+            }
+        } catch (...) {}
+    }
+
+    if (!sceneArg.empty()) {
+        std::string candidatePath = "Data/Scenes/" + sceneArg + "_scene.json";
+        std::string fullPath = ResourceLoader::getBasePath() + candidatePath;
+        if (std::filesystem::exists(fullPath)) {
+            g_sceneOverridePath = candidatePath;
+            Log::info("选择场景: {} ({})", sceneArg, candidatePath);
+        } else {
+            Log::warn("场景 '{}' 不存在 (查找: {})", sceneArg, fullPath);
+        }
     }
 
     if (auto status = InitializeEngine(config); !status.ok()) {

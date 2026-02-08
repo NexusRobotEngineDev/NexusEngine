@@ -99,6 +99,8 @@ struct Model {
     std::unordered_map<std::string, size_t> linkIndex;
     std::unordered_map<std::string, size_t> jointIndex;
 
+    std::unordered_map<std::string, Material> materials;
+
     const Link*  findLink(std::string_view name) const;
     const Joint* findJoint(std::string_view name) const;
     std::string  rootLinkName() const;

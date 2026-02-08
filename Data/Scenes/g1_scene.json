@@ -1,0 +1,15 @@
+{
+  "name": "g1_humanoid",
+  "camera": {
+    "position": [2.0, 1.2, 2.5]
+  },
+  "robot": {
+    "urdf": "Models/g1/g1_description.urdf",
+    "physics": "Scenes/g1_mujoco/scene_29dof.xml"
+  },
+  "ground": {
+    "size": [30, 30],
+    "color": [0.25, 0.25, 0.28, 1.0]
+  },
+  "objects": []
+}

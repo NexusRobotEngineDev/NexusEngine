@@ -11,11 +11,13 @@
 #include "TextureManager.h"
 #include "URDFLoader.h"
 #include "../Bridge/thirdparty.h"
+#include <optional>
+#include <cassert>
 
 namespace Nexus {
 namespace Core {
 
-static void processNode(TextureManager* textureManager, aiNode* node, const aiScene* aScene, Scene* engineScene, MeshManager* meshManager, Entity parentEntity, const std::string& directory) {
+static void processNode(TextureManager* textureManager, aiNode* node, const aiScene* aScene, Scene* engineScene, MeshManager* meshManager, Entity parentEntity, const std::string& directory, std::optional<std::array<float, 4>> fallbackColor = std::nullopt) {
     std::string nodeName = node->mName.C_Str();
     if (node->mNumMeshes == 0 && node->mNumChildren == 0 &&
         (nodeName.find("Camera") != std::string::npos ||
@@ -178,6 +180,9 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
                         meshComp.albedoFactor = {diffuse.r, diffuse.g, diffuse.b, diffuse.a};
                     }
                 }
+                if (fallbackColor && albedoIndex == 0) {
+                    meshComp.albedoFactor = *fallbackColor;
+                }
 
                 NX_CORE_INFO("[TextureDebug] Submesh entity assigned: Albedo={}, Sampler={}", albedoIndex, samplerIndex);
             } else {
@@ -187,7 +192,7 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        processNode(textureManager, node->mChildren[i], aScene, engineScene, meshManager, nodeEntity, directory);
+        processNode(textureManager, node->mChildren[i], aScene, engineScene, meshManager, nodeEntity, directory, fallbackColor);
     }
 }
 
@@ -338,8 +343,25 @@ Entity ModelLoader::loadURDF(TextureManager* textureManager, Scene* scene, MeshM
                 visual.origin.rpy[0], visual.origin.rpy[1], visual.origin.rpy[2]);
             scene->setParent(visualEntity, linkIt->second);
 
-            NX_CORE_INFO("NxURDF: processing visual Mesh for Link={}", link.name);
-            processNode(textureManager, aScene->mRootNode, aScene, scene, meshManager, visualEntity, "");
+            std::optional<std::array<float, 4>> fallbackColor = std::nullopt;
+
+            std::string meshExt = meshPath.substr(meshPath.find_last_of('.') + 1);
+            std::transform(meshExt.begin(), meshExt.end(), meshExt.begin(), ::tolower);
+            bool isSTL = (meshExt == "stl");
+
+            if (isSTL && visual.material) {
+                if (visual.material->color[0] != 1.0 || visual.material->color[1] != 1.0 || visual.material->color[2] != 1.0 || visual.material->color[3] != 1.0) {
+                    fallbackColor = { (float)visual.material->color[0], (float)visual.material->color[1], (float)visual.material->color[2], (float)visual.material->color[3] };
+                } else if (!visual.material->name.empty()) {
+                    auto matIt = model.materials.find(visual.material->name);
+                    if (matIt != model.materials.end()) {
+                        fallbackColor = { (float)matIt->second.color[0], (float)matIt->second.color[1], (float)matIt->second.color[2], (float)matIt->second.color[3] };
+                    }
+                }
+            }
+
+            NX_CORE_INFO("NxURDF: processing visual Mesh for Link={} (ext={}, fallback={})", link.name, meshExt, fallbackColor.has_value());
+            processNode(textureManager, aScene->mRootNode, aScene, scene, meshManager, visualEntity, "", fallbackColor);
         }
     }
 
