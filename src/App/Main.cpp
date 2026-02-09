@@ -196,7 +196,8 @@ Status InitializeEngine(const EngineConfig& config) {
     g_textureManager = std::make_unique<TextureManager>(vkContext);
 #endif
 
-    std::string scenePath = g_sceneOverridePath.empty() ? "Data/Scenes/default_scene.json" : g_sceneOverridePath;
+    std::string sceneRelPath = g_sceneOverridePath.empty() ? "Data/Scenes/default_scene.json" : g_sceneOverridePath;
+    std::string scenePath = ResourceLoader::getBasePath() + sceneRelPath;
     auto configResult = SceneLoader::parseSceneFile(scenePath);
     if (!configResult.ok()) {
         NX_CORE_WARN("场景文件加载失败: {}，使用默认配置", configResult.status().message());
