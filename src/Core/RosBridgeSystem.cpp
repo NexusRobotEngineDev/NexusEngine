@@ -1,6 +1,7 @@
 #include "RosBridgeSystem.h"
 #include "Components.h"
 #include "../Bridge/Log.h"
+#include "../Bridge/MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <zmq.hpp>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -28,11 +29,13 @@ struct RosBridgeSystem::Impl {
     std::unique_ptr<zmq::socket_t>  cmdReceiver;
     std::thread recvThread;
     std::atomic<bool> running{false};
+    std::atomic<bool> resetPending{false};
     std::mutex cmdMutex;
     std::vector<MotorCmd> latestCmds;
     bool initialized = false;
     std::string robotId   = "robot_0";
     std::string robotName = "unknown";
+    IPhysicsSystem* physicsSystem = nullptr;
 
     void startRecvThread() {
         running = true;
@@ -60,22 +63,42 @@ struct RosBridgeSystem::Impl {
     void parseCommand(const std::string& raw) {
         try {
             auto j = json::parse(raw);
-            if (j["type"] != "lowcmd") return;
+            auto type = j["type"].get<std::string>();
 
-            std::vector<MotorCmd> cmds;
-            for (auto& m : j["motors"]) {
-                MotorCmd cmd;
-                cmd.name = m["name"].get<std::string>();
-                cmd.q    = m["q"].get<float>();
-                cmd.dq   = m["dq"].get<float>();
-                cmd.kp   = m["kp"].get<float>();
-                cmd.kd   = m["kd"].get<float>();
-                cmd.tau  = m["tau"].get<float>();
-                cmds.push_back(cmd);
+            if (type == "reset") {
+                resetPending = true;
+                NX_CORE_INFO("[ZMQ] 收到 reset 指令");
+                return;
             }
 
-            std::lock_guard<std::mutex> lock(cmdMutex);
-            latestCmds = std::move(cmds);
+            if (type != "lowcmd") return;
+
+            if (physicsSystem) {
+                for (auto& m : j["motors"]) {
+                    physicsSystem->setJointControl(
+                        m["name"].get<std::string>(),
+                        m["q"].get<float>(),
+                        m["dq"].get<float>(),
+                        m["kp"].get<float>(),
+                        m["kd"].get<float>(),
+                        m["tau"].get<float>()
+                    );
+                }
+            } else {
+                std::vector<MotorCmd> cmds;
+                for (auto& m : j["motors"]) {
+                    MotorCmd cmd;
+                    cmd.name = m["name"].get<std::string>();
+                    cmd.q    = m["q"].get<float>();
+                    cmd.dq   = m["dq"].get<float>();
+                    cmd.kp   = m["kp"].get<float>();
+                    cmd.kd   = m["kd"].get<float>();
+                    cmd.tau  = m["tau"].get<float>();
+                    cmds.push_back(cmd);
+                }
+                std::lock_guard<std::mutex> lock(cmdMutex);
+                latestCmds = std::move(cmds);
+            }
 
         } catch (const std::exception& e) {
             NX_CORE_WARN("ZMQ JSON parse error: {}", e.what());
@@ -127,8 +150,20 @@ void RosBridgeSystem::shutdown() {
     }
 }
 
+void RosBridgeSystem::setPhysicsSystem(IPhysicsSystem* physicsSystem) {
+    m_impl->physicsSystem = physicsSystem;
+}
+
 void RosBridgeSystem::applyIncomingCommands(IPhysicsSystem* physicsSystem) {
     if (!m_impl->initialized || !physicsSystem) return;
+
+    if (m_impl->resetPending.exchange(false)) {
+        auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+        if (mj) {
+            mj->resetSimulation();
+            NX_CORE_INFO("[ZMQ] MuJoCo 仿真已重置");
+        }
+    }
 
     std::vector<MotorCmd> cmds;
     {
@@ -154,7 +189,7 @@ void RosBridgeSystem::applyIncomingCommands(IPhysicsSystem* physicsSystem) {
     }
 }
 
-void RosBridgeSystem::publishReplicas(Registry& registry) {
+void RosBridgeSystem::publishReplicas(Registry& registry, IPhysicsSystem* physicsSystem) {
     if (!m_impl->initialized) return;
 
     auto view = registry.view<TransformComponent, RigidBodyComponent>();
@@ -173,6 +208,39 @@ void RosBridgeSystem::publishReplicas(Registry& registry) {
         j_body["rotation"] = {transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]};
 
         j_state["bodies"].push_back(j_body);
+    }
+
+    if (physicsSystem) {
+        auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+        if (mj && mj->m_model && mj->m_data) {
+            int rootBodyId = 1;
+            if (rootBodyId < mj->m_model->nbody) {
+                const double* quat = mj->m_data->xquat + 4 * rootBodyId;
+                const double* cvel = mj->m_data->cvel + 6 * rootBodyId;
+                j_state["imu"] = {
+                    {"quaternion", {quat[0], quat[1], quat[2], quat[3]}},
+                    {"gyroscope",  {cvel[0], cvel[1], cvel[2]}}
+                };
+            }
+
+            j_state["motors"] = json::array();
+            for (int i = 0; i < mj->m_model->nu; ++i) {
+                const char* actuatorName = mj_id2name(mj->m_model, mjOBJ_ACTUATOR, i);
+                if (!actuatorName) continue;
+
+                int trnid = mj->m_model->actuator_trnid[i * 2];
+                float q   = (float)mj->m_data->qpos[mj->m_model->jnt_qposadr[trnid]];
+                float dq  = (float)mj->m_data->qvel[mj->m_model->jnt_dofadr[trnid]];
+                float tau = (float)mj->m_data->actuator_force[i];
+
+                j_state["motors"].push_back({
+                    {"name", actuatorName},
+                    {"q", q},
+                    {"dq", dq},
+                    {"tau", tau}
+                });
+            }
+        }
     }
 
     if (!j_state["bodies"].empty()) {

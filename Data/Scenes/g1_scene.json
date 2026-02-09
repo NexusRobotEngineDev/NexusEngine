@@ -5,7 +5,7 @@
   },
   "robot": {
     "urdf": "Models/g1/g1_description.urdf",
-    "physics": "Scenes/g1_mujoco/scene_29dof.xml"
+    "physics": "Scenes/g1_mujoco/scene_29dof_rev.xml"
   },
   "ground": {
     "size": [30, 30],

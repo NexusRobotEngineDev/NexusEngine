@@ -24,6 +24,7 @@ public:
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) override;
     virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) override;
     virtual std::vector<std::string> getActuatorNames() const override;
+    void resetSimulation();
 
     mjModel* m_model = nullptr;
     mjData*  m_data  = nullptr;
@@ -44,6 +45,7 @@ private:
     std::unordered_map<std::string, int> m_actuatorName2Id;
     std::unordered_map<int, JointCmd> m_pendingCommands;
     std::mutex m_cmdMutex;
+    bool m_cmdDirty = false;
 };
 
 } // namespace Nexus
