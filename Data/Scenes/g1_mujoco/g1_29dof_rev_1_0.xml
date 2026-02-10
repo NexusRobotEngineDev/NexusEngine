@@ -25,9 +25,9 @@
     <mesh name="right_knee_link" file="right_knee_link.STL"/>
     <mesh name="right_ankle_pitch_link" file="right_ankle_pitch_link.STL"/>
     <mesh name="right_ankle_roll_link" file="right_ankle_roll_link.STL"/>
-    <mesh name="waist_yaw_link" file="waist_yaw_link_rev_1_0.STL"/>
-    <mesh name="waist_roll_link" file="waist_roll_link_rev_1_0.STL"/>
-    <mesh name="torso_link" file="torso_link_rev_1_0.STL"/>
+    <mesh name="waist_yaw_link" file="waist_yaw_link.STL"/>
+    <mesh name="waist_roll_link" file="waist_roll_link.STL"/>
+    <mesh name="torso_link" file="torso_link.STL"/>
     <mesh name="logo_link" file="logo_link.STL"/>
     <mesh name="head_link" file="head_link.STL"/>
     <mesh name="left_shoulder_pitch_link" file="left_shoulder_pitch_link.STL"/>

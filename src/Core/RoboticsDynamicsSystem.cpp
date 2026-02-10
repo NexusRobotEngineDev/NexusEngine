@@ -2,6 +2,7 @@
 #include "Components.h"
 #include "../Bridge/Log.h"
 #include <cassert>
+#include <unordered_set>
 
 namespace Nexus {
 namespace Core {
@@ -56,6 +57,12 @@ static void propagatePhysicsZUp(entt::registry& reg, entt::entity entity, const 
             tr.worldMatrix = buildZUpMatrix(pos, quat);
             currentMatZUp = tr.worldMatrix;
             gotMuJoCo = true;
+        } else {
+            static std::unordered_set<std::string> s_missed;
+            if (s_missed.find(rb.bodyName) == s_missed.end()) {
+                NX_CORE_WARN("[Physics] URDF Link '{}' 在 MuJoCo 中未找到对应的物理 Body，将使用父节点的相对变换。", rb.bodyName);
+                s_missed.insert(rb.bodyName);
+            }
         }
     }
 
