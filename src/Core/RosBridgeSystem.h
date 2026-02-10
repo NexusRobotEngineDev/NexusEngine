@@ -33,12 +33,14 @@ public:
     /**
      * @brief 每帧更新，将场景中带有 RigidBodyComponent 的实体状态推送到 ZMQ
      */
-    void publishReplicas(Registry& registry);
+    void publishReplicas(Registry& registry, IPhysicsSystem* physicsSystem = nullptr);
 
     /**
      * @brief 消费从 ZMQ 接收到的关节控制指令，并直接下发到底层物理系统
      */
     void applyIncomingCommands(IPhysicsSystem* physicsSystem);
+
+    void setPhysicsSystem(IPhysicsSystem* physicsSystem);
 
     /**
      * @brief 广播模型信息（actuator 列表 + robot_list），让 bridge 端自动发现
@@ -56,6 +58,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
+
 
 } // namespace Core
 } // namespace Nexus

@@ -248,6 +248,7 @@ Status InitializeEngine(const EngineConfig& config) {
         }
 
         g_rosBridge->setRobotInfo(folderName + "_0", robotName);
+        g_rosBridge->setPhysicsSystem(g_physicsSystem);
     }
 
     return OkStatus();
@@ -448,7 +449,7 @@ void RunMainLoop() {
                 HierarchySystem::update(g_scene->getRegistry());
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
-                    g_rosBridge->publishReplicas(g_scene->getRegistry());
+                    g_rosBridge->publishReplicas(g_scene->getRegistry(), g_physicsSystem);
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
                 }
             }
