@@ -45,7 +45,6 @@ private:
     std::unordered_map<std::string, int> m_actuatorName2Id;
     std::unordered_map<int, JointCmd> m_pendingCommands;
     std::mutex m_cmdMutex;
-    bool m_cmdDirty = false;
 };
 
 } // namespace Nexus

@@ -85,25 +85,18 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
             if (m_pendingCommands.empty()) return;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(m_cmdMutex);
-            if (m_cmdDirty) {
-                for(const auto& [actuatorId, cmd] : m_pendingCommands) {
-                    int trnid = m_model->actuator_trnid[actuatorId * 2];
-
-                    float current_q = m_data->qpos[m_model->jnt_qposadr[trnid]];
-                    float current_dq = m_data->qvel[m_model->jnt_dofadr[trnid]];
-
-                    float generated_torque = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
-                    m_data->ctrl[actuatorId] = generated_torque;
-                }
-                m_cmdDirty = false;
-            }
-        }
-
         m_timeStepAccumulator += deltaTime;
 
         while (m_timeStepAccumulator >= m_model->opt.timestep) {
+            {
+                std::lock_guard<std::mutex> lock(m_cmdMutex);
+                for(const auto& [actuatorId, cmd] : m_pendingCommands) {
+                    int trnid = m_model->actuator_trnid[actuatorId * 2];
+                    float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
+                    float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
+                    m_data->ctrl[actuatorId] = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
+                }
+            }
             mj_step(m_model, m_data);
             m_timeStepAccumulator -= m_model->opt.timestep;
         }
@@ -127,7 +120,6 @@ void MuJoCo_PhysicsSystem::setJointControl(const std::string& jointName, float q
     if (it != m_actuatorName2Id.end()) {
         std::lock_guard<std::mutex> lock(m_cmdMutex);
         m_pendingCommands[it->second] = {q, dq, kp, kd, tau};
-        m_cmdDirty = true;
     } else {
         static int s_missCount = 0;
         if (++s_missCount <= 3) {
