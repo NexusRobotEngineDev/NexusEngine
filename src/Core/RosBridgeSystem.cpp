@@ -31,6 +31,7 @@ struct RosBridgeSystem::Impl {
     std::atomic<bool> running{false};
     std::atomic<bool> resetPending{false};
     std::mutex cmdMutex;
+    std::mutex pubMutex;
     std::vector<MotorCmd> latestCmds;
     bool initialized = false;
     std::string robotId   = "robot_0";
@@ -171,19 +172,6 @@ void RosBridgeSystem::applyIncomingCommands(IPhysicsSystem* physicsSystem) {
         cmds = m_impl->latestCmds;
     }
 
-    if (!cmds.empty()) {
-        static int s_logCounter = 0;
-        if (++s_logCounter % 500 == 0) {
-            NX_CORE_INFO("[ZMQ] 收到指令帧, 电机数={}, 首个: name={}, q={:.3f}, kp={:.1f}",
-                cmds.size(), cmds[0].name, cmds[0].q, cmds[0].kp);
-        }
-    } else {
-        static int s_emptyCounter = 0;
-        if (++s_emptyCounter % 500 == 0) {
-            NX_CORE_WARN("[ZMQ] 队列为空，尚未收到指令");
-        }
-    }
-
     for (const auto& cmd : cmds) {
         physicsSystem->setJointControl(cmd.name, cmd.q, cmd.dq, cmd.kp, cmd.kd, cmd.tau);
     }
@@ -216,10 +204,19 @@ void RosBridgeSystem::publishReplicas(Registry& registry, IPhysicsSystem* physic
             int rootBodyId = 1;
             if (rootBodyId < mj->m_model->nbody) {
                 const double* quat = mj->m_data->xquat + 4 * rootBodyId;
-                const double* cvel = mj->m_data->cvel + 6 * rootBodyId;
+
+                double gyro[3] = {0.0, 0.0, 0.0};
+                int jnt_id = mj->m_model->body_jntadr[rootBodyId];
+                if (jnt_id >= 0 && mj->m_model->jnt_type[jnt_id] == mjJNT_FREE) {
+                    int dof_adr = mj->m_model->jnt_dofadr[jnt_id];
+                    gyro[0] = mj->m_data->qvel[dof_adr + 3];
+                    gyro[1] = mj->m_data->qvel[dof_adr + 4];
+                    gyro[2] = mj->m_data->qvel[dof_adr + 5];
+                }
+
                 j_state["imu"] = {
                     {"quaternion", {quat[0], quat[1], quat[2], quat[3]}},
-                    {"gyroscope",  {cvel[0], cvel[1], cvel[2]}}
+                    {"gyroscope",  {gyro[0], gyro[1], gyro[2]}}
                 };
             }
 
@@ -247,6 +244,65 @@ void RosBridgeSystem::publishReplicas(Registry& registry, IPhysicsSystem* physic
         j_state["robot_id"] = m_impl->robotId;
         std::string payload = j_state.dump();
         std::string topic = "state:" + m_impl->robotId;
+        std::lock_guard<std::mutex> lock(m_impl->pubMutex);
+        m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
+        m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
+    }
+}
+
+void RosBridgeSystem::publishPhysicsState(mjModel* model, mjData* data) {
+    if (!m_impl->initialized || !model || !data) return;
+
+    json j_state;
+    j_state["type"] = "state";
+    j_state["bodies"] = json::array();
+
+    int rootBodyId = 1;
+    if (rootBodyId < model->nbody) {
+        const double* quat = data->xquat + 4 * rootBodyId;
+
+        double gyro[3] = {0.0, 0.0, 0.0};
+        int jnt_id = model->body_jntadr[rootBodyId];
+        if (jnt_id >= 0 && model->jnt_type[jnt_id] == mjJNT_FREE) {
+            int dof_adr = model->jnt_dofadr[jnt_id];
+            gyro[0] = data->qvel[dof_adr + 3];
+            gyro[1] = data->qvel[dof_adr + 4];
+            gyro[2] = data->qvel[dof_adr + 5];
+        }
+
+        j_state["imu"] = {
+            {"quaternion", {quat[0], quat[1], quat[2], quat[3]}},
+            {"gyroscope",  {gyro[0], gyro[1], gyro[2]}}
+        };
+
+        json j_body;
+        j_body["name"] = mj_id2name(model, mjOBJ_BODY, rootBodyId);
+        j_body["position"] = {data->xpos[3*rootBodyId], data->xpos[3*rootBodyId+1], data->xpos[3*rootBodyId+2]};
+        j_body["rotation"] = {quat[0], quat[1], quat[2], quat[3]};
+        j_state["bodies"].push_back(j_body);
+    }
+
+    j_state["motors"] = json::array();
+    for (int i = 0; i < model->nu; ++i) {
+        const char* actuatorName = mj_id2name(model, mjOBJ_ACTUATOR, i);
+        if (!actuatorName) continue;
+        int trnid = model->actuator_trnid[i * 2];
+        float q   = (float)data->qpos[model->jnt_qposadr[trnid]];
+        float dq  = (float)data->qvel[model->jnt_dofadr[trnid]];
+        float tau = (float)data->actuator_force[i];
+        j_state["motors"].push_back({
+            {"name", actuatorName},
+            {"q", q},
+            {"dq", dq},
+            {"tau", tau}
+        });
+    }
+
+    j_state["robot_id"] = m_impl->robotId;
+    std::string payload = j_state.dump();
+    std::string topic = "state:" + m_impl->robotId;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->pubMutex);
         m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
         m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
     }

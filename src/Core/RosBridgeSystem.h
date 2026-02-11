@@ -5,6 +5,11 @@
 #include <memory>
 #include <string>
 
+struct mjModel_;
+struct mjData_;
+typedef struct mjModel_ mjModel;
+typedef struct mjData_ mjData;
+
 namespace Nexus {
 namespace Core {
 
@@ -41,6 +46,12 @@ public:
     void applyIncomingCommands(IPhysicsSystem* physicsSystem);
 
     void setPhysicsSystem(IPhysicsSystem* physicsSystem);
+
+    /**
+     * @brief 从物理线程高频调用，仅发布 IMU+电机状态（不依赖 ECS Registry）
+     * 线程安全：仅使用 ZMQ publisher 的 send（内部加锁）
+     */
+    void publishPhysicsState(mjModel* model, mjData* data);
 
     /**
      * @brief 广播模型信息（actuator 列表 + robot_list），让 bridge 端自动发现

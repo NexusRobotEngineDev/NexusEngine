@@ -5,6 +5,7 @@
 #include "thirdparty.h"
 #include <unordered_map>
 #include <mutex>
+#include <functional>
 
 namespace Nexus {
 
@@ -26,6 +27,9 @@ public:
     virtual std::vector<std::string> getActuatorNames() const override;
     void resetSimulation();
 
+    using StateCallback = std::function<void(mjModel*, mjData*)>;
+    void setStateCallback(StateCallback cb, int decimation = 7);
+
     mjModel* m_model = nullptr;
     mjData*  m_data  = nullptr;
 
@@ -45,6 +49,10 @@ private:
     std::unordered_map<std::string, int> m_actuatorName2Id;
     std::unordered_map<int, JointCmd> m_pendingCommands;
     std::mutex m_cmdMutex;
+
+    StateCallback m_stateCallback;
+    int m_stateDecimation = 7;
+    int m_substepCounter = 0;
 };
 
 } // namespace Nexus

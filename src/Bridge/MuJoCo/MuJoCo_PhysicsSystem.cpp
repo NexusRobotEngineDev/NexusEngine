@@ -91,14 +91,31 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
             {
                 std::lock_guard<std::mutex> lock(m_cmdMutex);
                 for(const auto& [actuatorId, cmd] : m_pendingCommands) {
+                    if (std::isnan(cmd.q) || std::isnan(cmd.kp) || std::isinf(cmd.q)) continue;
+
                     int trnid = m_model->actuator_trnid[actuatorId * 2];
                     float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
                     float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
-                    m_data->ctrl[actuatorId] = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
+                    float ctrl = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
+
+                    if (std::isnan(ctrl) || std::isinf(ctrl)) continue;
+
+                    float frcLo = (float)m_model->actuator_ctrlrange[actuatorId * 2];
+                    float frcHi = (float)m_model->actuator_ctrlrange[actuatorId * 2 + 1];
+                    if (frcLo < frcHi) {
+                        ctrl = std::clamp(ctrl, frcLo, frcHi);
+                    }
+
+                    m_data->ctrl[actuatorId] = ctrl;
                 }
             }
             mj_step(m_model, m_data);
             m_timeStepAccumulator -= m_model->opt.timestep;
+
+            ++m_substepCounter;
+            if (m_stateCallback && (m_substepCounter % m_stateDecimation == 0)) {
+                m_stateCallback(m_model, m_data);
+            }
         }
     }
 }
@@ -106,25 +123,10 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
 void MuJoCo_PhysicsSystem::setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) {
     if (!m_model) return;
 
-    static bool s_namesDumped = false;
-    if (!s_namesDumped) {
-        s_namesDumped = true;
-        std::string allNames;
-        for (const auto& [name, id] : m_actuatorName2Id) {
-            allNames += name + "(" + std::to_string(id) + ") ";
-        }
-        NX_CORE_INFO("[Physics] MuJoCo actuator 列表 ({}个): {}", m_actuatorName2Id.size(), allNames);
-    }
-
     auto it = m_actuatorName2Id.find(jointName);
     if (it != m_actuatorName2Id.end()) {
         std::lock_guard<std::mutex> lock(m_cmdMutex);
         m_pendingCommands[it->second] = {q, dq, kp, kd, tau};
-    } else {
-        static int s_missCount = 0;
-        if (++s_missCount <= 3) {
-            NX_CORE_WARN("[Physics] 未找到 actuator: '{}' (已知{}个)", jointName, m_actuatorName2Id.size());
-        }
     }
 }
 
@@ -158,6 +160,12 @@ std::vector<std::string> MuJoCo_PhysicsSystem::getActuatorNames() const {
         result.push_back(name);
     }
     return result;
+}
+
+void MuJoCo_PhysicsSystem::setStateCallback(StateCallback cb, int decimation) {
+    m_stateCallback = std::move(cb);
+    m_stateDecimation = decimation;
+    m_substepCounter = 0;
 }
 
 } // namespace Nexus

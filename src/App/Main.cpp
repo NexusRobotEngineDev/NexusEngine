@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "PhysicsThread.h"
 #include "ResourceLoader.h"
+#include "MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <cmath>
 #include <filesystem>
 
@@ -249,6 +250,15 @@ Status InitializeEngine(const EngineConfig& config) {
 
         g_rosBridge->setRobotInfo(folderName + "_0", robotName);
         g_rosBridge->setPhysicsSystem(g_physicsSystem);
+
+        auto* mjPhys = dynamic_cast<MuJoCo_PhysicsSystem*>(g_physicsSystem);
+        if (mjPhys) {
+            auto* bridge = g_rosBridge.get();
+            mjPhys->setStateCallback([bridge](mjModel* m, mjData* d) {
+                bridge->publishPhysicsState(m, d);
+            }, 7);
+            NX_CORE_INFO("已注册物理线程高频状态发布回调 (decimation=7, ~{:.0f}Hz)", 1.0 / (7 * 0.003));
+        }
     }
 
     return OkStatus();
