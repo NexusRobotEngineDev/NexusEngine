@@ -96,6 +96,14 @@
                 </div>
                 <div class="panel-content" id="performance-content">
                     <div class="prop-row">
+                        <span class="prop-label">FPS</span>
+                        <span id="prop-fps" class="prop-value" style="background-color: transparent; border-width: 0; color: #aaffaa;">0.0</span>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Frame Time</span>
+                        <span id="prop-frame-time" class="prop-value" style="background-color: transparent; border-width: 0; color: #aaffaa;">0.00 ms</span>
+                    </div>
+                    <div class="prop-row">
                         <span class="prop-label">Draw Calls</span>
                         <span id="prop-draw-calls" class="prop-value" style="background-color: transparent; border-width: 0; color: #ffffff;">0</span>
                     </div>

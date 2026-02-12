@@ -31,6 +31,11 @@ using namespace Nexus::Core;
 
 std::string g_sceneOverridePath;
 
+namespace Nexus {
+    std::atomic<float> g_RenderStats_FPS{0.0f};
+    std::atomic<float> g_RenderStats_FrameTime{0.0f};
+}
+
 namespace {
 WindowPtr g_window = nullptr;
 ContextPtr g_context = nullptr;
@@ -347,6 +352,20 @@ void RunMainLoop() {
             auto now = std::chrono::high_resolution_clock::now();
             float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
             lastFrameTime = now;
+
+            static auto fpsStartTime = now;
+            static int frameCount = 0;
+            frameCount++;
+            float elapsedFpsTime = std::chrono::duration<float>(now - fpsStartTime).count();
+            if (elapsedFpsTime >= 0.5f) {
+                float fps = frameCount / elapsedFpsTime;
+                float frameTime = (elapsedFpsTime * 1000.0f) / frameCount;
+                g_RenderStats_FPS.store(fps, std::memory_order_relaxed);
+                g_RenderStats_FrameTime.store(frameTime, std::memory_order_relaxed);
+                fpsStartTime = now;
+                frameCount = 0;
+            }
+
             if (deltaTime > 0.1f) deltaTime = 0.1f;
 
             auto& registry = g_scene->getRegistry();
@@ -479,7 +498,7 @@ void RunMainLoop() {
         g_context->sync();
 #endif
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        std::this_thread::yield();
     }
 }
 } // namespace

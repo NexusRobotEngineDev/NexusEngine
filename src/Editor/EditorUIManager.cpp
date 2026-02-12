@@ -14,6 +14,8 @@ namespace Nexus {
 
 extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
 extern std::atomic<uint32_t> g_RenderStats_Triangles;
+extern std::atomic<float> g_RenderStats_FPS;
+extern std::atomic<float> g_RenderStats_FrameTime;
 
 bool EditorUIManager::initialize(VK_UIBridge* uiBridge) {
     m_uiBridge = uiBridge;
@@ -596,6 +598,19 @@ void EditorUIManager::update(Scene* scene) {
     }
     if (trianglesEl) {
         trianglesEl->SetInnerRML(std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed)));
+    }
+
+    auto* fpsEl = m_editorDoc->GetElementById("prop-fps");
+    auto* frameTimeEl = m_editorDoc->GetElementById("prop-frame-time");
+    if (fpsEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f", g_RenderStats_FPS.load(std::memory_order_relaxed));
+        fpsEl->SetInnerRML(buf);
+    }
+    if (frameTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_FrameTime.load(std::memory_order_relaxed));
+        frameTimeEl->SetInnerRML(buf);
     }
 }
 
