@@ -32,8 +32,8 @@ using namespace Nexus::Core;
 std::string g_sceneOverridePath;
 
 namespace Nexus {
-    std::atomic<float> g_RenderStats_FPS{0.0f};
-    std::atomic<float> g_RenderStats_FrameTime{0.0f};
+    extern std::atomic<float> g_RenderStats_FPS;
+    extern std::atomic<float> g_RenderStats_FrameTime;
 }
 
 namespace {

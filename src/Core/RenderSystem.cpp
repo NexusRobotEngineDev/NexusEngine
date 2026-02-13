@@ -6,8 +6,12 @@
 #include "DrawCommandGenerator.h"
 #include "Log.h"
 #include <vector>
+#include <atomic>
 
 namespace Nexus {
+    std::atomic<float> g_RenderStats_FPS{0.0f};
+    std::atomic<float> g_RenderStats_FrameTime{0.0f};
+
 namespace Core {
 
 RenderSystem::RenderSystem(VK_Context* context, VK_Swapchain* swapchain)
