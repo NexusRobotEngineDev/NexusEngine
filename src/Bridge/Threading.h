@@ -9,6 +9,8 @@
 
 namespace Nexus {
 
+extern std::atomic<float> g_RenderStats_RenderDrawTime;
+
 class Registry;
 
 /**
@@ -82,9 +84,28 @@ private:
     void processCommand(const RenderCommand& cmd) {
         try {
             switch (cmd.type) {
-                case RenderCommandType::Draw:
+                case RenderCommandType::Draw: {
+                    auto rtStart = std::chrono::high_resolution_clock::now();
                     if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
+                    auto rtEnd = std::chrono::high_resolution_clock::now();
+                    double duration = std::chrono::duration<double, std::milli>(rtEnd - rtStart).count();
+
+                    static double rtAccum = 0.0;
+                    static int rtFrames = 0;
+                    static auto rtStatStart = rtStart;
+
+                    rtAccum += duration;
+                    rtFrames++;
+
+                    float elapsed = std::chrono::duration<float>(rtEnd - rtStatStart).count();
+                    if (elapsed >= 0.5f) {
+                        g_RenderStats_RenderDrawTime.store((float)(rtAccum / rtFrames), std::memory_order_relaxed);
+                        rtAccum = 0.0;
+                        rtFrames = 0;
+                        rtStatStart = rtEnd;
+                    }
                     break;
+                }
                 case RenderCommandType::Resize:
                     if (m_renderer) (void)m_renderer->onResize(cmd.width, cmd.height);
                     break;

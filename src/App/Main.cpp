@@ -34,6 +34,9 @@ std::string g_sceneOverridePath;
 namespace Nexus {
     extern std::atomic<float> g_RenderStats_FPS;
     extern std::atomic<float> g_RenderStats_FrameTime;
+    extern std::atomic<float> g_RenderStats_LogicTime;
+    extern std::atomic<float> g_RenderStats_RenderSyncTime;
+    extern std::atomic<float> g_RenderStats_RenderPrepTime;
 }
 
 namespace {
@@ -313,8 +316,13 @@ void RunMainLoop() {
     uint32_t lastWidth = 1280;
     uint32_t lastHeight = 720;
 
+    double accumLogicTime = 0.0;
+    double accumSyncTime = 0.0;
+    double accumPrepTime = 0.0;
+
     std::vector<SDL_Event> localEvents;
     while (!g_quit) {
+        auto logicStartTime = std::chrono::high_resolution_clock::now();
 
         localEvents.clear();
         {
@@ -360,10 +368,21 @@ void RunMainLoop() {
             if (elapsedFpsTime >= 0.5f) {
                 float fps = frameCount / elapsedFpsTime;
                 float frameTime = (elapsedFpsTime * 1000.0f) / frameCount;
+                float avgLogic = (float)(accumLogicTime / frameCount);
+                float avgSync = (float)(accumSyncTime / frameCount);
+                float avgPrep = (float)(accumPrepTime / frameCount);
+
                 g_RenderStats_FPS.store(fps, std::memory_order_relaxed);
                 g_RenderStats_FrameTime.store(frameTime, std::memory_order_relaxed);
+                g_RenderStats_LogicTime.store(avgLogic, std::memory_order_relaxed);
+                g_RenderStats_RenderSyncTime.store(avgSync, std::memory_order_relaxed);
+                g_RenderStats_RenderPrepTime.store(avgPrep, std::memory_order_relaxed);
+
                 fpsStartTime = now;
                 frameCount = 0;
+                accumLogicTime = 0.0;
+                accumSyncTime = 0.0;
+                accumPrepTime = 0.0;
             }
 
             if (deltaTime > 0.1f) deltaTime = 0.1f;
@@ -470,7 +489,15 @@ void RunMainLoop() {
 
 #if ENABLE_VULKAN
         if (g_rhiThread) {
+            auto logicEndTime = std::chrono::high_resolution_clock::now();
+            accumLogicTime += std::chrono::duration<double, std::milli>(logicEndTime - logicStartTime).count();
+
+            auto syncStartTime = std::chrono::high_resolution_clock::now();
             g_rhiThread->requestSync();
+            auto syncEndTime = std::chrono::high_resolution_clock::now();
+            accumSyncTime += std::chrono::duration<double, std::milli>(syncEndTime - syncStartTime).count();
+
+            auto prepStartTime = std::chrono::high_resolution_clock::now();
             if (g_scene) {
                 if (g_rosBridge && g_physicsSystem) {
                     g_rosBridge->applyIncomingCommands(g_physicsSystem);
@@ -486,6 +513,8 @@ void RunMainLoop() {
             if (g_editorUIManager) {
                 g_editorUIManager->update(g_scene.get());
             }
+            auto prepEndTime = std::chrono::high_resolution_clock::now();
+            accumPrepTime += std::chrono::duration<double, std::milli>(prepEndTime - prepStartTime).count();
 
             g_rhiThread->resumeSync();
 

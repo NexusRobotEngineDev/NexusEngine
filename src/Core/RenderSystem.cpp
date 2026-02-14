@@ -12,6 +12,11 @@ namespace Nexus {
     std::atomic<float> g_RenderStats_FPS{0.0f};
     std::atomic<float> g_RenderStats_FrameTime{0.0f};
 
+    std::atomic<float> g_RenderStats_LogicTime{0.0f};
+    std::atomic<float> g_RenderStats_RenderSyncTime{0.0f};
+    std::atomic<float> g_RenderStats_RenderPrepTime{0.0f};
+    std::atomic<float> g_RenderStats_RenderDrawTime{0.0f};
+
 namespace Core {
 
 RenderSystem::RenderSystem(VK_Context* context, VK_Swapchain* swapchain)

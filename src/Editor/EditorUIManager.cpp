@@ -16,6 +16,10 @@ extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
 extern std::atomic<uint32_t> g_RenderStats_Triangles;
 extern std::atomic<float> g_RenderStats_FPS;
 extern std::atomic<float> g_RenderStats_FrameTime;
+extern std::atomic<float> g_RenderStats_LogicTime;
+extern std::atomic<float> g_RenderStats_RenderSyncTime;
+extern std::atomic<float> g_RenderStats_RenderPrepTime;
+extern std::atomic<float> g_RenderStats_RenderDrawTime;
 
 bool EditorUIManager::initialize(VK_UIBridge* uiBridge) {
     m_uiBridge = uiBridge;
@@ -611,6 +615,32 @@ void EditorUIManager::update(Scene* scene) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_FrameTime.load(std::memory_order_relaxed));
         frameTimeEl->SetInnerRML(buf);
+    }
+
+    auto* logicTimeEl = m_editorDoc->GetElementById("prop-logic-time");
+    auto* rsTimeEl = m_editorDoc->GetElementById("prop-render-sync-time");
+    auto* prepTimeEl = m_editorDoc->GetElementById("prop-render-prep-time");
+    auto* drawTimeEl = m_editorDoc->GetElementById("prop-render-draw-time");
+
+    if (logicTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_LogicTime.load(std::memory_order_relaxed));
+        logicTimeEl->SetInnerRML(buf);
+    }
+    if (rsTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderSyncTime.load(std::memory_order_relaxed));
+        rsTimeEl->SetInnerRML(buf);
+    }
+    if (prepTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderPrepTime.load(std::memory_order_relaxed));
+        prepTimeEl->SetInnerRML(buf);
+    }
+    if (drawTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderDrawTime.load(std::memory_order_relaxed));
+        drawTimeEl->SetInnerRML(buf);
     }
 }
 
