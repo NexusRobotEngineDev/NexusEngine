@@ -234,7 +234,7 @@ Status InitializeEngine(const EngineConfig& config) {
         if (!loadStatus.ok()) {
             NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
         }
-        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem);
+        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem, 1000.0f);
         g_physicsThread->startThread();
     }
 
