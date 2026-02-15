@@ -13,6 +13,8 @@ target_link_libraries(NexusTests PRIVATE
     GTest::gtest
     BridgeImpl
     Core
+    spdlog::spdlog
+    fmt::fmt
 )
 
 include(GoogleTest)

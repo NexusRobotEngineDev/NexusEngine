@@ -69,7 +69,8 @@ target_link_libraries(BridgeImpl PUBLIC Bridge absl::status absl::statusor EnTT:
 if(ENABLE_VULKAN)
     find_package(unofficial-shaderc CONFIG REQUIRED)
     find_package(spdlog CONFIG REQUIRED)
-    target_link_libraries(BridgeImpl PUBLIC Vulkan::Vulkan unofficial::shaderc::shaderc spdlog::spdlog)
+    find_package(fmt CONFIG REQUIRED)
+    target_link_libraries(BridgeImpl PUBLIC Vulkan::Vulkan unofficial::shaderc::shaderc spdlog::spdlog fmt::fmt)
     target_compile_definitions(BridgeImpl PUBLIC VULKAN_HPP_NO_EXCEPTIONS ENABLE_VULKAN)
 endif()
 

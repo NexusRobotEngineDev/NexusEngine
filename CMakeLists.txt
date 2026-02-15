@@ -28,12 +28,33 @@ endif()
 find_package(absl CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 
+include(FetchContent)
+
+set(CESIUM_TESTS_ENABLED OFF CACHE BOOL "" FORCE)
+set(CESIUM_USE_SYSTEM_SQLITE3 ON CACHE BOOL "" FORCE)
+set(CESIUM_USE_SYSTEM_URIPARSER ON CACHE BOOL "" FORCE)
+set(CESIUM_USE_SYSTEM_DRACO ON CACHE BOOL "" FORCE)
+set(CESIUM_USE_SYSTEM_RAPIDJSON OFF CACHE BOOL "" FORCE)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+find_package(spdlog CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+
+FetchContent_Declare(
+    cesium-native
+    GIT_REPOSITORY https://github.com/CesiumGS/cesium-native.git
+    GIT_TAG        v0.35.0
+    PATCH_COMMAND  ${CMAKE_COMMAND} -DCESIUM_SRC_DIR=<SOURCE_DIR> -P "${CMAKE_CURRENT_SOURCE_DIR}/patch_cesium.cmake"
+)
+set(CMAKE_C_COMPILER_WORKS TRUE)
+FetchContent_MakeAvailable(cesium-native)
+
 
 add_subdirectory(src/Bridge)
 add_subdirectory(src/Core)
 
 add_executable(NexusApp src/App/Main.cpp)
-target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge)
+target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge spdlog::spdlog fmt::fmt)
 add_custom_command(TARGET NexusApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/Data

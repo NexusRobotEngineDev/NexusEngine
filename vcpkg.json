@@ -21,6 +21,11 @@
     "tinyxml2",
     "vulkan",
     "zeromq",
-    "cppzmq"
+    "cppzmq",
+    "uriparser",
+    "sqlite3",
+    "draco",
+    "glm",
+    "cpp-httplib"
   ]
 }
