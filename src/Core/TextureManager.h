@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 
 namespace Nexus {
 namespace Core {
@@ -38,14 +39,27 @@ public:
     void addTexture(const std::string& key, std::unique_ptr<ITexture> texture);
 
     /**
+     * @brief 移除特定的纹理缓存（用于流式瓦片销毁）
+     * @param key 缓存键
+     */
+    void removeTexture(const std::string& key);
+
+    /**
      * @brief 获取默认纹理（fallback）
      */
     ITexture* getDefaultTexture();
 
+    /**
+     * @brief 获取纯白纹理（适用于没有贴图但只有颜色的材质）
+     */
+    ITexture* getWhiteTexture();
+
 private:
     IContext* m_context;
+    std::mutex m_mutex;
     std::unordered_map<std::string, std::unique_ptr<ITexture>> m_textures;
     std::unique_ptr<ITexture> m_defaultTexture;
+    std::unique_ptr<ITexture> m_whiteTexture;
 };
 
 } // namespace Core

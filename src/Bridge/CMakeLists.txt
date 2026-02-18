@@ -64,7 +64,7 @@ if(ENABLE_MUJOCO)
 endif()
 
 add_library(BridgeImpl STATIC ${BRIDGE_SOURCES})
-target_link_libraries(BridgeImpl PUBLIC Bridge absl::status absl::statusor EnTT::EnTT)
+target_link_libraries(BridgeImpl PUBLIC Bridge absl::status absl::statusor EnTT::EnTT httplib::httplib)
 
 if(ENABLE_VULKAN)
     find_package(unofficial-shaderc CONFIG REQUIRED)

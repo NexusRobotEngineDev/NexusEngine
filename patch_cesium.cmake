@@ -61,13 +61,19 @@ if(EXISTS "${ROOT_CMAKELISTS}")
     file(WRITE "${ROOT_CMAKELISTS}" "${CONTENT}")
 endif()
 
-file(GLOB_RECURSE SUB_CMAKELISTS "${CESIUM_SRC_DIR}/Cesium*/CMakeLists.txt")
+file(GLOB_RECURSE SUB_CMAKELISTS "${CESIUM_SRC_DIR}/**/CMakeLists.txt" "${CESIUM_SRC_DIR}/CMakeLists.txt")
 foreach(CMAKELIST ${SUB_CMAKELISTS})
     file(READ "${CMAKELIST}" CONTENT)
     set(OLD_CONTENT "${CONTENT}")
-    
     string(REGEX REPLACE "([ \r\n\t])spdlog([ \r\n\t\\)])" "\\1spdlog::spdlog\\2" CONTENT "${CONTENT}")
-    string(REPLACE "target_link_libraries_system" "target_link_libraries" CONTENT "${CONTENT}")
+    
+    # Only replace target_link_libraries_system usages, not the definition
+    if(NOT "${CMAKELIST}" STREQUAL "${ROOT_CMAKELISTS}")
+        string(REPLACE "target_link_libraries_system" "target_link_libraries" CONTENT "${CONTENT}")
+    endif()
+    
+    string(REPLACE "/WX" "" CONTENT "${CONTENT}")
+    string(REPLACE "add_compile_options(/WX)" "" CONTENT "${CONTENT}")
     
     if(NOT "${CONTENT}" STREQUAL "${OLD_CONTENT}")
         file(WRITE "${CMAKELIST}" "${CONTENT}")

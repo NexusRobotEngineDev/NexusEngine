@@ -483,17 +483,11 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
         auto meshView = registry->view<MeshComponent, TransformComponent>();
 
-        IBuffer* vb = m_context->getGlobalVertexBuffer();
-        IBuffer* ib = m_context->getGlobalIndexBuffer();
+        IBuffer* globalVb = m_context->getGlobalVertexBuffer();
+        IBuffer* globalIb = m_context->getGlobalIndexBuffer();
 
-        if (vb && ib) {
-            vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(vb)->getHandle() };
-            vk::DeviceSize offsets[] = { 0 };
-            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-            commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(ib)->getHandle(), 0, vk::IndexType::eUint32);
-
-            static int logCounter = 0;
-            bool shouldLog = (logCounter++ % 600 == 0);
+        static int logCounter = 0;
+        bool shouldLog = (logCounter++ % 600 == 0);
 
             size_t meshCount = 0;
             uint32_t totalTriangles = 0;
@@ -503,6 +497,16 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                 auto& transform = meshView.get<TransformComponent>(entity);
 
                 std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
+
+                IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
+                IBuffer* currentIb = mesh.indexBuffer ? mesh.indexBuffer : globalIb;
+
+                if (!currentVb || !currentIb) continue;
+
+                vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(currentVb)->getHandle() };
+                vk::DeviceSize offsets[] = { 0 };
+                commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+                commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(currentIb)->getHandle(), 0, vk::IndexType::eUint32);
 
                 if (shouldLog) {
                     std::string eName = "Unknown";
@@ -558,14 +562,6 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             if (shouldLog) {
                 NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", meshCount, totalTriangles);
             }
-        } else {
-            static bool bufferWarned = false;
-            if (!bufferWarned) {
-                NX_CORE_WARN("Rendering skipped: Global VertexBuffer({}) or IndexBuffer({}) is NULL!", (void*)vb, (void*)ib);
-                bufferWarned = true;
-            }
-        }
-    } else {
     }
 
 #ifdef ENABLE_RMLUI

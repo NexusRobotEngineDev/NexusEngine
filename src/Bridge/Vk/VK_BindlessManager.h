@@ -24,10 +24,10 @@ public:
      */
     uint32_t registerTexture(vk::ImageView view);
 
-    /**
-     * @brief 注册采样器到全局描述符集
-     */
     uint32_t registerSampler(vk::Sampler sampler);
+
+    void unregisterTexture(uint32_t index);
+    void unregisterSampler(uint32_t index);
 
     vk::DescriptorSetLayout getLayout() const { return m_layout; }
     vk::DescriptorSet getSet() const { return m_set; }
@@ -43,6 +43,9 @@ private:
 
     uint32_t m_nextTextureIndex = 0;
     uint32_t m_nextSamplerIndex = 0;
+
+    std::vector<uint32_t> m_freeTextureIndices;
+    std::vector<uint32_t> m_freeSamplerIndices;
 };
 
 } // namespace Nexus

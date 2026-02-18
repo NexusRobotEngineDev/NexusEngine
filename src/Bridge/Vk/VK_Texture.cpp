@@ -7,6 +7,11 @@ VK_Texture::VK_Texture(VK_Context* context) : m_context(context), m_image(nullpt
 
 VK_Texture::~VK_Texture() {
     auto device = m_context->getDevice();
+    if (m_context && m_context->getBindlessManager()) {
+        m_context->getBindlessManager()->unregisterTexture(m_bindlessTextureIndex);
+        if (m_sampler) m_context->getBindlessManager()->unregisterSampler(m_bindlessSamplerIndex);
+    }
+
     if (m_sampler) device.destroySampler(m_sampler);
     if (m_ownsResources) {
         if (m_view) device.destroyImageView(m_view);

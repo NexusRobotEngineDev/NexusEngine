@@ -27,6 +27,7 @@ endif()
 
 find_package(absl CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 include(FetchContent)
 
@@ -55,6 +56,9 @@ add_subdirectory(src/Core)
 
 add_executable(NexusApp src/App/Main.cpp)
 target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge spdlog::spdlog fmt::fmt)
+if(MSVC)
+    set_target_properties(NexusApp PROPERTIES LINK_FLAGS "/FORCE:MULTIPLE")
+endif()
 add_custom_command(TARGET NexusApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/Data

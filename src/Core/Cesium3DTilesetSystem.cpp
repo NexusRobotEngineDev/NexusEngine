@@ -1,0 +1,265 @@
+#include "Cesium3DTilesetSystem.h"
+#include "CesiumComponents.h"
+#include "Components.h"
+#include "../Bridge/Log.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/trigonometric.hpp>
+
+#include <Cesium3DTilesSelection/ViewState.h>
+#include <CesiumGeometry/Transforms.h>
+#include <CesiumGeospatial/Cartographic.h>
+
+#include <spdlog/spdlog.h>
+#include <Cesium3DTilesSelection/TilesetExternals.h>
+#include "CesiumTaskProcessor.h"
+#include "CesiumAssetAccessor.h"
+#include "CesiumPrepareRendererResources.h"
+#include <Cesium3DTilesContent/registerAllTileContentTypes.h>
+
+using namespace Nexus;
+using namespace Nexus::Core;
+
+namespace Nexus {
+namespace Core {
+
+static Scene* g_tilesetScene = nullptr;
+static Nexus::IContext* g_tilesetContext = nullptr;
+static TextureManager* g_tilesetTextureManager = nullptr;
+static std::shared_ptr<CesiumAsync::IAssetAccessor> g_assetAccessor = nullptr;
+static std::shared_ptr<CesiumPrepareRendererResources> g_prepareRes = nullptr;
+
+void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager) {
+    g_tilesetScene = scene;
+    g_tilesetContext = context;
+    g_tilesetTextureManager = textureManager;
+    g_assetAccessor = std::make_shared<CesiumAssetAccessor>();
+
+    Cesium3DTilesContent::registerAllTileContentTypes();
+}
+
+void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
+    auto cameraView = registry.view<CameraComponent, TransformComponent>();
+
+    entt::entity camEntity = entt::null;
+    for (auto entity : cameraView) {
+        camEntity = entity;
+        break;
+    }
+
+    if (camEntity == entt::null) {
+        return;
+    }
+
+    auto& camera = registry.get<CameraComponent>(camEntity);
+    auto& camTransform = registry.get<TransformComponent>(camEntity);
+
+    double viewportWidth = 1920.0;
+    double viewportHeight = 1080.0;
+
+    glm::dvec3 cameraLocalPosition(camTransform.worldMatrix[12], camTransform.worldMatrix[13], camTransform.worldMatrix[14]);
+
+    glm::dvec3 cameraLocalDirection(camera.target[0] - cameraLocalPosition.x,
+                                    camera.target[1] - cameraLocalPosition.y,
+                                    camera.target[2] - cameraLocalPosition.z);
+    if (glm::length(cameraLocalDirection) > 0.0001) {
+        cameraLocalDirection = glm::normalize(cameraLocalDirection);
+    } else {
+        cameraLocalDirection = glm::dvec3(0.0, 0.0, -1.0);
+    }
+
+    glm::dvec3 cameraLocalUp(camera.up[0], camera.up[1], camera.up[2]);
+    cameraLocalUp = glm::normalize(cameraLocalUp);
+
+    auto tilesetView = registry.view<Cesium3DTileset, CesiumGeoreference>();
+
+    for (auto entity : tilesetView) {
+        auto& tilesetComponent = tilesetView.get<Cesium3DTileset>(entity);
+        auto& geoRef = tilesetView.get<CesiumGeoreference>(entity);
+
+        if (!tilesetComponent.m_tileset) {
+            if (tilesetComponent.m_url.empty() && tilesetComponent.m_ionAssetId <= 0) {
+                continue;
+            }
+
+            if (!g_tilesetScene || !g_tilesetContext || !g_tilesetTextureManager) {
+                NX_CORE_ERROR("Cesium3DTilesetSystem: Cannot initialize Tileset. Call initialize() first.");
+                continue;
+            }
+
+            NX_CORE_INFO("Cesium3DTilesetSystem: Initializing Tileset...");
+
+            g_prepareRes = std::make_shared<CesiumPrepareRendererResources>(g_tilesetScene, g_tilesetContext, g_tilesetTextureManager);
+
+            Cesium3DTilesSelection::TilesetExternals externals{
+                g_assetAccessor,
+                g_prepareRes,
+                CesiumAsync::AsyncSystem(std::make_shared<CesiumTaskProcessor>()),
+                nullptr,
+                spdlog::default_logger()
+            };
+
+            Cesium3DTilesSelection::TilesetOptions options;
+
+            if (!tilesetComponent.m_url.empty()) {
+                tilesetComponent.m_tileset = std::make_unique<Cesium3DTilesSelection::Tileset>(
+                    externals, tilesetComponent.m_url, options);
+            } else {
+                tilesetComponent.m_tileset = std::make_unique<Cesium3DTilesSelection::Tileset>(
+                    externals, tilesetComponent.m_ionAssetId, tilesetComponent.m_ionAccessToken, options);
+            }
+        }
+
+        if (!geoRef.m_localCoordinateSystem) {
+            geoRef.m_localCoordinateSystem.emplace(
+                CesiumGeospatial::LocalHorizontalCoordinateSystem(
+                    CesiumGeospatial::Cartographic::fromDegrees(
+                        geoRef.m_longitude,
+                        geoRef.m_latitude,
+                        geoRef.m_height
+                    )
+                )
+            );
+        }
+
+        glm::dvec3 camEnuPosition(cameraLocalPosition.x, -cameraLocalPosition.z, cameraLocalPosition.y);
+        glm::dvec3 camEnuDirection(cameraLocalDirection.x, -cameraLocalDirection.z, cameraLocalDirection.y);
+        glm::dvec3 camEnuUp(cameraLocalUp.x, -cameraLocalUp.z, cameraLocalUp.y);
+
+        glm::dvec3 ecefPosition = geoRef.m_localCoordinateSystem->localPositionToEcef(camEnuPosition);
+        glm::dvec3 ecefDirection = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuDirection);
+        glm::dvec3 ecefUp = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuUp);
+
+        Cesium3DTilesSelection::ViewState viewState = Cesium3DTilesSelection::ViewState::create(
+            ecefPosition,
+            ecefDirection,
+            ecefUp,
+            glm::dvec2(viewportWidth, viewportHeight),
+            glm::radians(static_cast<double>(camera.aspect * camera.fov)),
+            glm::radians(static_cast<double>(camera.fov))
+        );
+
+        if (!tilesetComponent.m_suspendUpdate) {
+            std::vector<Cesium3DTilesSelection::ViewState> frustums = { viewState };
+            const auto& result = tilesetComponent.m_tileset->updateView(frustums, dt);
+
+            static float debugPrintTimer = 0.0f;
+            debugPrintTimer += dt;
+            bool shouldLogCesium = (debugPrintTimer > 2.0f);
+            if (shouldLogCesium) {
+                debugPrintTimer = 0.0f;
+            }
+
+            size_t visibleCount = result.tilesToRenderThisFrame.size();
+            size_t tilesNotDone = 0, tilesNoContent = 0, tilesNoResources = 0, tilesRendered = 0;
+
+
+            glm::dmat4 ecefToEnu = geoRef.m_localCoordinateSystem->getEcefToLocalTransformation();
+
+            glm::dmat4 enuToYUp(
+                glm::dvec4(1.0,  0.0,  0.0, 0.0),
+                glm::dvec4(0.0,  0.0, -1.0, 0.0),
+                glm::dvec4(0.0,  1.0,  0.0, 0.0),
+                glm::dvec4(0.0,  0.0,  0.0, 1.0)
+            );
+
+            glm::dmat4 ecefToLocalYUp = enuToYUp * ecefToEnu;
+
+            if (g_prepareRes) {
+                g_prepareRes->setEcefToLocalYUp(ecefToLocalYUp);
+            }
+
+            auto viewMeshes = registry.view<CesiumGltfComponent, TransformComponent>();
+            size_t cesiumEntityCount = 0;
+            for (auto e : viewMeshes) {
+                auto& trans = viewMeshes.get<TransformComponent>(e);
+                trans.worldMatrix = {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1};
+                cesiumEntityCount++;
+            }
+
+            for (const auto* pTile : result.tilesToRenderThisFrame) {
+                if (pTile->getState() != Cesium3DTilesSelection::TileLoadState::Done) {
+                    tilesNotDone++;
+                    continue;
+                }
+
+                const auto* pRenderContent = pTile->getContent().getRenderContent();
+                if (!pRenderContent) {
+                    tilesNoContent++;
+                    continue;
+                }
+
+                auto pMainResult = pRenderContent->getRenderResources();
+                if (!pMainResult) {
+                    tilesNoResources++;
+                    continue;
+                }
+
+                auto pRenderRes = static_cast<CesiumTileRenderResources*>(pMainResult);
+
+                for (auto e : pRenderRes->entities) {
+                    if (registry.valid(e)) {
+                        auto& trans = registry.get<TransformComponent>(e);
+                        trans.worldMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+                        tilesRendered++;
+                    }
+                }
+            }
+
+            if (shouldLogCesium) {
+                NX_CORE_INFO("Cesium3DTilesetSystem: visible={}, cesiumEntities={}, rendered={}, notDone={}, noContent={}, noResources={}",
+                    visibleCount, cesiumEntityCount, tilesRendered, tilesNotDone, tilesNoContent, tilesNoResources);
+                FILE* diagFile = fopen("cesium_diag.txt", "w");
+                if (diagFile) {
+                    fprintf(diagFile, "visible=%zu\ncesiumEntities=%zu\nrendered=%zu\nnotDone=%zu\nnoContent=%zu\nnoResources=%zu\n",
+                        visibleCount, cesiumEntityCount, tilesRendered, tilesNotDone, tilesNoContent, tilesNoResources);
+
+                    fprintf(diagFile, "\necefToEnu col3 (translation): (%.1f, %.1f, %.1f)\n",
+                        ecefToEnu[3][0], ecefToEnu[3][1], ecefToEnu[3][2]);
+                    fprintf(diagFile, "camera pos: (%.2f, %.2f, %.2f)\n",
+                        cameraLocalPosition.x, cameraLocalPosition.y, cameraLocalPosition.z);
+
+                    bool dumpedTile = false;
+                    for (const auto* pTile2 : result.tilesToRenderThisFrame) {
+                        if (dumpedTile) break;
+                        if (pTile2->getState() != Cesium3DTilesSelection::TileLoadState::Done) continue;
+                        const auto* pRC = pTile2->getContent().getRenderContent();
+                        if (!pRC) continue;
+                        auto pMR = pRC->getRenderResources();
+                        if (!pMR) continue;
+
+                        const glm::dmat4& tileXform = pTile2->getTransform();
+                        fprintf(diagFile, "\nFirst visible tile getTransform():\n");
+                        for (int r = 0; r < 4; r++)
+                            fprintf(diagFile, "  [%.2f, %.2f, %.2f, %.2f]\n", tileXform[0][r], tileXform[1][r], tileXform[2][r], tileXform[3][r]);
+
+                        glm::dmat4 ft = enuToYUp * ecefToEnu * tileXform;
+                        fprintf(diagFile, "\nfinalTransform (enuToYUp * ecefToEnu * tileTransform):\n");
+                        for (int r = 0; r < 4; r++)
+                            fprintf(diagFile, "  [%.4f, %.4f, %.4f, %.4f]\n", ft[0][r], ft[1][r], ft[2][r], ft[3][r]);
+                        fprintf(diagFile, "  => pos = (%.2f, %.2f, %.2f)\n", ft[3][0], ft[3][1], ft[3][2]);
+
+                        dumpedTile = true;
+                    }
+
+                    auto diagView = registry.view<CesiumGltfComponent, TransformComponent, MeshComponent>();
+                    int printed = 0;
+                    for (auto e : diagView) {
+                        auto& t = diagView.get<TransformComponent>(e);
+                        auto& m = diagView.get<MeshComponent>(e);
+                        if (t.worldMatrix[12] < 999999.0f) {
+                            fprintf(diagFile, "\nENTITY entity=%u worldPos=(%.2f, %.2f, %.2f) indexCount=%u\n",
+                                (unsigned)e, t.worldMatrix[12], t.worldMatrix[13], t.worldMatrix[14], m.indexCount);
+                            if (++printed >= 3) break;
+                        }
+                    }
+                    fclose(diagFile);
+                }
+            }
+        }
+    }
+}
+
+} // namespace Core
+} // namespace Nexus

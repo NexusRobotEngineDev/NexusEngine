@@ -15,19 +15,31 @@ TextureManager::TextureManager(IContext* context) : m_context(context) {
         0, 0, 0, 255,       255, 0, 255, 255
     };
     m_defaultTexture = m_context->createTexture(defaultData, TextureUsage::Sampled);
+
+    ImageData whiteData;
+    whiteData.width = 1;
+    whiteData.height = 1;
+    whiteData.channels = 4;
+    whiteData.pixels = { 255, 255, 255, 255 };
+    m_whiteTexture = m_context->createTexture(whiteData, TextureUsage::Sampled);
 }
 
 TextureManager::~TextureManager() {
     m_textures.clear();
     m_defaultTexture.reset();
+    m_whiteTexture.reset();
 }
 
 ITexture* TextureManager::getOrCreateTexture(const std::string& path) {
-    auto it = m_textures.find(path);
-    if (it != m_textures.end()) {
-        NX_CORE_INFO("[TextureDebug] Cache Hit: {}", path);
-        return it->second.get();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_textures.find(path);
+        if (it != m_textures.end()) {
+            NX_CORE_INFO("[TextureDebug] Cache Hit: {}", path);
+            return it->second.get();
+        }
     }
+
     NX_CORE_INFO("[TextureDebug] Cache Miss: {}", path);
 
     auto imgRes = ResourceLoader::loadImage(path);
@@ -43,32 +55,56 @@ ITexture* TextureManager::getOrCreateTexture(const std::string& path) {
     }
 
     ITexture* ptr = texture.get();
-    m_textures[path] = std::move(texture);
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_textures[path] = std::move(texture);
+    }
+
     return ptr;
 }
 
 ITexture* TextureManager::createTextureFromMemory(const std::string& key, const ImageData& data) {
-    auto it = m_textures.find(key);
-    if (it != m_textures.end()) {
-        NX_CORE_INFO("[TextureDebug] Cache Hit for Memory Texture: {}", key);
-        return it->second.get();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto it = m_textures.find(key);
+        if (it != m_textures.end()) {
+            NX_CORE_INFO("[TextureDebug] Cache Hit for Memory Texture: {}", key);
+            return it->second.get();
+        }
     }
+
     NX_CORE_INFO("[TextureDebug] Cache Miss for Memory Texture: {}", key);
 
     auto texture = m_context->createTexture(data, TextureUsage::Sampled);
     if (!texture) return nullptr;
 
     ITexture* ptr = texture.get();
-    m_textures[key] = std::move(texture);
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_textures[key] = std::move(texture);
+    }
+
     return ptr;
 }
 
 void TextureManager::addTexture(const std::string& key, std::unique_ptr<ITexture> texture) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_textures[key] = std::move(texture);
+}
+
+void TextureManager::removeTexture(const std::string& key) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_textures.erase(key);
 }
 
 ITexture* TextureManager::getDefaultTexture() {
     return m_defaultTexture.get();
+}
+
+ITexture* TextureManager::getWhiteTexture() {
+    return m_whiteTexture.get();
 }
 
 } // namespace Core

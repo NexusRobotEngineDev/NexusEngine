@@ -26,6 +26,6 @@
     "sqlite3",
     "draco",
     "glm",
-    "cpp-httplib"
+    "openssl"
   ]
 }

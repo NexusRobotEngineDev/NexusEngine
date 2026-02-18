@@ -52,9 +52,17 @@ CesiumAsync::Future<std::shared_ptr<CesiumAsync::IAssetRequest>> CesiumAssetAcce
     }
 
     asyncSystem.runInWorkerThread([this, promise, verb, url, headers, payload = std::move(payloadData)]() mutable {
-        auto req = executeRequest(verb, url, headers, gsl::span<const std::byte>(
-            reinterpret_cast<const std::byte*>(payload.data()), payload.size()));
-        promise.resolve(std::move(req));
+        try {
+            auto req = executeRequest(verb, url, headers, gsl::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(payload.data()), payload.size()));
+            promise.resolve(std::move(req));
+        } catch (const std::exception& e) {
+            NX_LOG_ERROR("Cesium Asset Accessor Exception in worker thread: url={}, error={}", url, e.what());
+            promise.reject(std::runtime_error(std::string("CesiumAssetAccessor: ") + e.what()));
+        } catch (...) {
+            NX_LOG_ERROR("Cesium Asset Accessor Unknown Exception in worker thread: url={}", url);
+            promise.reject(std::runtime_error("CesiumAssetAccessor: Unknown Exception"));
+        }
     });
 
     return promise.getFuture();
@@ -102,6 +110,8 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
         httplib::Headers httpHeaders;
         CesiumAsync::HttpHeaders requestHeadersMap;
         for (const auto& h : headers) {
+            if (h.first == "Accept-Encoding") continue;
+
             httpHeaders.insert({h.first, h.second});
             requestHeadersMap[h.first] = h.second;
         }
@@ -113,11 +123,19 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
 
         if (res) {
             statusCode = static_cast<uint16_t>(res->status);
+            std::string contentEncoding = "";
             for (const auto& header : res->headers) {
                 responseHeaders[header.first] = header.second;
+                if (header.first == "Content-Encoding") {
+                    contentEncoding = header.second;
+                }
             }
             contentType = extractContentType(res->headers);
             responseData.assign(res->body.begin(), res->body.end());
+
+            std::string snippet = res->body.substr(0, std::min<size_t>(res->body.size(), 100));
+            NX_LOG_INFO("Cesium HTTP: {} -> Status: {}, Type: {}, Enc: {}, Size: {}, Prefix: {}",
+                url, statusCode, contentType, contentEncoding, res->body.size(), snippet);
         } else {
             statusCode = 0;
             NX_LOG_ERROR("HTTP Request failed: {} - Err: {}", url, httplib::to_string(res.error()));

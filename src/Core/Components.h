@@ -106,10 +106,10 @@ inline std::array<float, 16> multiplyMat4(const std::array<float, 16>& a, const 
 struct CameraComponent {
     float fov = 45.0f;
     float aspect = 1.7777778f;
-    float nearPlane = 0.1f;
-    float farPlane = 1000.0f;
+    float nearPlane = 1.0f;
+    float farPlane = 25484000.0f;
 
-    std::array<float, 3> target = {0.0f, 0.0f, -1.0f};
+    std::array<float, 3> target = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
     std::array<float, 16> computeProjectionMatrix() const {

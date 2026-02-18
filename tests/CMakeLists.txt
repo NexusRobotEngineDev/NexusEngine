@@ -17,5 +17,9 @@ target_link_libraries(NexusTests PRIVATE
     fmt::fmt
 )
 
+if(MSVC)
+    set_target_properties(NexusTests PROPERTIES LINK_FLAGS "/FORCE:MULTIPLE")
+endif()
+
 include(GoogleTest)
 gtest_discover_tests(NexusTests)

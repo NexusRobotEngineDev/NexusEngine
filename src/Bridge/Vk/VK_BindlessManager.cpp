@@ -78,7 +78,17 @@ void VK_BindlessManager::shutdown() {
 }
 
 uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
-    uint32_t index = m_nextTextureIndex++;
+    uint32_t index = 0;
+    if (!m_freeTextureIndices.empty()) {
+        index = m_freeTextureIndices.back();
+        m_freeTextureIndices.pop_back();
+    } else {
+        if (m_nextTextureIndex >= MAX_TEXTURES) {
+            NX_CORE_ERROR("VK_BindlessManager: Exceeded MAX_TEXTURES ({}). Memory leak detected!", MAX_TEXTURES);
+            return 0;
+        }
+        index = m_nextTextureIndex++;
+    }
 
     vk::DescriptorImageInfo imageInfo;
     imageInfo.imageView = view;
@@ -99,7 +109,17 @@ uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
 }
 
 uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
-    uint32_t index = m_nextSamplerIndex++;
+    uint32_t index = 0;
+    if (!m_freeSamplerIndices.empty()) {
+        index = m_freeSamplerIndices.back();
+        m_freeSamplerIndices.pop_back();
+    } else {
+        if (m_nextSamplerIndex >= MAX_SAMPLERS) {
+            NX_CORE_ERROR("VK_BindlessManager: Exceeded MAX_SAMPLERS ({}). Memory leak detected!", MAX_SAMPLERS);
+            return 0;
+        }
+        index = m_nextSamplerIndex++;
+    }
 
     vk::DescriptorImageInfo samplerInfo;
     samplerInfo.sampler = sampler;
@@ -116,6 +136,20 @@ uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
     NX_CORE_INFO("[Bindless] Registered Sampler: {}, Index: {}", (void*)sampler, index);
 
     return index;
+}
+
+void VK_BindlessManager::unregisterTexture(uint32_t index) {
+    if (index > 0 || (index == 0 && m_nextTextureIndex > 0)) {
+        m_freeTextureIndices.push_back(index);
+        NX_CORE_INFO("[Bindless] Unregistered Texture Index: {}", index);
+    }
+}
+
+void VK_BindlessManager::unregisterSampler(uint32_t index) {
+    if (index > 0 || (index == 0 && m_nextSamplerIndex > 0)) {
+        m_freeSamplerIndices.push_back(index);
+        NX_CORE_INFO("[Bindless] Unregistered Sampler Index: {}", index);
+    }
 }
 
 } // namespace Nexus
