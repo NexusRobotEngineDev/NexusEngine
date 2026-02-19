@@ -67,8 +67,15 @@ struct RosBridgeSystem::Impl {
             auto type = j["type"].get<std::string>();
 
             if (type == "reset") {
-                resetPending = true;
-                NX_CORE_INFO("[ZMQ] 收到 reset 指令");
+                if (physicsSystem) {
+                    auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+                    if (mj) {
+                        mj->resetSimulation();
+                        NX_CORE_INFO("[ZMQ] MuJoCo 仿真已重置 (From RecvThread)");
+                    }
+                } else {
+                    resetPending = true;
+                }
                 return;
             }
 
@@ -155,27 +162,7 @@ void RosBridgeSystem::setPhysicsSystem(IPhysicsSystem* physicsSystem) {
     m_impl->physicsSystem = physicsSystem;
 }
 
-void RosBridgeSystem::applyIncomingCommands(IPhysicsSystem* physicsSystem) {
-    if (!m_impl->initialized || !physicsSystem) return;
 
-    if (m_impl->resetPending.exchange(false)) {
-        auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
-        if (mj) {
-            mj->resetSimulation();
-            NX_CORE_INFO("[ZMQ] MuJoCo 仿真已重置");
-        }
-    }
-
-    std::vector<MotorCmd> cmds;
-    {
-        std::lock_guard<std::mutex> lock(m_impl->cmdMutex);
-        cmds = m_impl->latestCmds;
-    }
-
-    for (const auto& cmd : cmds) {
-        physicsSystem->setJointControl(cmd.name, cmd.q, cmd.dq, cmd.kp, cmd.kd, cmd.tau);
-    }
-}
 
 void RosBridgeSystem::publishReplicas(Registry& registry, IPhysicsSystem* physicsSystem) {
     if (!m_impl->initialized) return;

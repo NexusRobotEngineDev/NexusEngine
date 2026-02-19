@@ -40,11 +40,6 @@ public:
      */
     void publishReplicas(Registry& registry, IPhysicsSystem* physicsSystem = nullptr);
 
-    /**
-     * @brief 消费从 ZMQ 接收到的关节控制指令，并直接下发到底层物理系统
-     */
-    void applyIncomingCommands(IPhysicsSystem* physicsSystem);
-
     void setPhysicsSystem(IPhysicsSystem* physicsSystem);
 
     /**

@@ -541,9 +541,6 @@ void RunMainLoop() {
 
             auto prepStartTime = std::chrono::high_resolution_clock::now();
             if (g_scene) {
-                if (g_rosBridge && g_physicsSystem) {
-                    g_rosBridge->applyIncomingCommands(g_physicsSystem);
-                }
                 HierarchySystem::update(g_scene->getRegistry());
 
                 Cesium3DTilesetSystem::update(g_scene->getRegistry(), deltaTime);
