@@ -7,9 +7,5 @@
     "urdf": "Models/go1/go1.urdf",
     "physics": ""
   },
-  "ground": {
-    "size": [20, 20],
-    "color": [0.55, 0.55, 0.55, 1.0]
-  },
   "objects": []
 }

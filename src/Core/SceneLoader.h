@@ -32,7 +32,7 @@ public:
         std::array<float, 3> cameraPosition = {0.f, 0.5f, 3.f};
         std::string robotUrdf;
         std::string robotPhysics;
-        bool hasGround = true;
+        bool hasGround = false;
         std::array<float, 2> groundSize = {20.f, 20.f};
         std::array<float, 4> groundColor = {0.6f, 0.6f, 0.6f, 1.f};
         std::vector<ObjectDef> objects;

@@ -93,6 +93,20 @@ static void convertTreeToYUp(entt::registry& reg, entt::entity entity, const std
     }
 }
 
+static void applyOffsetToTree(entt::registry& reg, entt::entity entity, float ox, float oy, float oz) {
+    if (reg.all_of<TransformComponent>(entity)) {
+        auto& tr = reg.get<TransformComponent>(entity);
+        tr.worldMatrix[12] += ox;
+        tr.worldMatrix[13] += oy;
+        tr.worldMatrix[14] += oz;
+    }
+    if (reg.all_of<HierarchyComponent>(entity)) {
+        for (auto child : reg.get<HierarchyComponent>(entity).children) {
+            applyOffsetToTree(reg, child, ox, oy, oz);
+        }
+    }
+}
+
 void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsSystem) {
     if (!physicsSystem) return;
     auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
@@ -116,6 +130,14 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
     }
 
     for (entt::entity rootEntity : rootEntities) {
+        float offsetX = 0.f, offsetY = 0.f, offsetZ = 0.f;
+        if (reg.all_of<TransformComponent>(rootEntity)) {
+            auto& rootTr = reg.get<TransformComponent>(rootEntity);
+            offsetX = rootTr.position[0];
+            offsetY = rootTr.position[1];
+            offsetZ = rootTr.position[2];
+        }
+
         std::array<float, 16> identityMat = {
             1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
         };
@@ -129,6 +151,8 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
             0,  0,  0,  1
         };
         convertTreeToYUp(reg, rootEntity, zToY);
+
+        applyOffsetToTree(reg, rootEntity, offsetX, offsetY, offsetZ);
     }
 }
 

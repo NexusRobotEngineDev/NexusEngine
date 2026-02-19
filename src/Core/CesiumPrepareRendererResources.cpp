@@ -357,6 +357,13 @@ void CesiumPrepareRendererResources::setEcefToLocalYUp(const glm::dmat4& ecefToL
     m_ecefToLocalYUp = ecefToLocalYUp;
 }
 
+void CesiumPrepareRendererResources::ensureCesiumRootEntity() {
+    if (m_cesiumRootEntity == entt::null || !m_scene->getRegistry().has<TagComponent>(m_cesiumRootEntity)) {
+        Entity root = m_scene->createEntity("CesiumTiles");
+        m_cesiumRootEntity = root.getHandle();
+    }
+}
+
 void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection::Tile& tile, void* pLoadThreadResult) {
     auto pParsedTile = static_cast<ParsedTile*>(pLoadThreadResult);
     if (!pParsedTile) {
@@ -466,6 +473,10 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         }
 
         pRenderResources->entities.push_back(ent.getHandle());
+
+        ensureCesiumRootEntity();
+        Entity rootEntity(m_cesiumRootEntity, &m_scene->getRegistry());
+        m_scene->setParent(ent, rootEntity);
 
         if (pi == 0 && vertCount > 0) {
             NX_CORE_INFO("[CesiumMainThread] First verts after ECEF->Local transform:");
