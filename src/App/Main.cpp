@@ -547,7 +547,6 @@ void RunMainLoop() {
 
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
-                    g_rosBridge->publishReplicas(g_scene->getRegistry(), g_physicsSystem);
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
                 }
             }

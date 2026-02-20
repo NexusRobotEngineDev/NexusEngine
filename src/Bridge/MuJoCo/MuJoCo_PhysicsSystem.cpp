@@ -80,9 +80,20 @@ void MuJoCo_PhysicsSystem::resetSimulation() {
 
 void MuJoCo_PhysicsSystem::update(float deltaTime) {
     if (m_model && m_data) {
+        bool isPaused = false;
         {
             std::lock_guard<std::mutex> lock(m_cmdMutex);
-            if (m_pendingCommands.empty()) return;
+            if (m_pendingCommands.empty()) {
+                isPaused = true;
+            }
+        }
+
+        if (isPaused) {
+            static int bootstrapCounter = 0;
+            if (m_stateCallback && (++bootstrapCounter % 20 == 0)) {
+                m_stateCallback(m_model, m_data);
+            }
+            return;
         }
 
         m_timeStepAccumulator += deltaTime;
