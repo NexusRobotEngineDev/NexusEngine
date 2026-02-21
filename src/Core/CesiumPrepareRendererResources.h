@@ -5,6 +5,7 @@
 #include <CesiumGltf/Model.h>
 #include <glm/glm.hpp>
 #include <mutex>
+#include <entt/entt.hpp>
 
 namespace Nexus {
 
@@ -74,6 +75,9 @@ private:
 
     std::mutex m_transformMutex;
     glm::dmat4 m_ecefToLocalYUp = glm::dmat4(1.0);
+
+    entt::entity m_cesiumRootEntity = entt::null;
+    void ensureCesiumRootEntity();
 };
 
 } // namespace Nexus

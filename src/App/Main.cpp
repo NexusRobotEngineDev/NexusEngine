@@ -257,7 +257,7 @@ Status InitializeEngine(const EngineConfig& config) {
     if (ionToken) {
         tileset.m_ionAccessToken = ionToken;
     } else {
-        tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI2ODZjNzM1MC1lOTk1LTQzOTYtODNlMS00OTNiYzhlMjQ5MDEiLCJpZCI6MzY5NzM2LCJpYXQiOjE3NzQ4ODQ1MzN9.F10cy24sBXYMC6qa-_n-buDP-0YPck-qmNow-lC6LnQ";
+        tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YzFmM2RhZC0wZTM1LTQwNTgtOGJhNy00YzQ3MDAyN2IxNjQiLCJpZCI6NDEyMDc2LCJpYXQiOjE3NzUwMTI2ODl9.JFwAvTfQCe8wvmczvyfqbP8BvwxjZ09WLjZpF7U4rhU";
         NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
     }
 #else

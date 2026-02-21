@@ -428,10 +428,14 @@ void EditorUIManager::update(Scene* scene) {
                 auto& tag = entity.getComponent<TagComponent>();
 
                 bool hasChildren = false;
+                int childCount = 0;
                 if (entity.hasComponent<HierarchyComponent>()) {
                     auto& hc = entity.getComponent<HierarchyComponent>();
                     hasChildren = !hc.children.empty();
+                    childCount = (int)hc.children.size();
                 }
+
+                bool isCesiumRoot = (tag.name == "CesiumTiles");
 
                 uint32_t entId = static_cast<uint32_t>(ent);
                 bool isExpanded = m_expandedEntities.count(entId) > 0;
@@ -448,16 +452,20 @@ void EditorUIManager::update(Scene* scene) {
                 }
 
                 std::string prefix;
-                if (hasChildren) {
+                if (isCesiumRoot && hasChildren) {
                     prefix = isExpanded ? "[-] " : "[+] ";
+                    nodePtr->SetInnerRML(prefix + tag.name + " (" + std::to_string(childCount) + " tiles)");
+                } else if (hasChildren) {
+                    prefix = isExpanded ? "[-] " : "[+] ";
+                    nodePtr->SetInnerRML(prefix + tag.name);
                 } else {
                     prefix = "    ";
+                    nodePtr->SetInnerRML(prefix + tag.name);
                 }
-                nodePtr->SetInnerRML(prefix + tag.name);
                 nodePtr->SetAttribute("entity-id", std::to_string(entId));
                 treeParent->AppendChild(std::move(nodePtr));
 
-                if (hasChildren && isExpanded) {
+                if (hasChildren && isExpanded && !isCesiumRoot) {
                     auto& hc = entity.getComponent<HierarchyComponent>();
                     for (auto child : hc.children) {
                         if (registry.getInternal().valid(child)) {
