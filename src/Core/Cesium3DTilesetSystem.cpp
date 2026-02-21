@@ -30,11 +30,15 @@ static TextureManager* g_tilesetTextureManager = nullptr;
 static std::shared_ptr<CesiumAsync::IAssetAccessor> g_assetAccessor = nullptr;
 static std::shared_ptr<CesiumPrepareRendererResources> g_prepareRes = nullptr;
 
-void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager) {
+void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath) {
     g_tilesetScene = scene;
     g_tilesetContext = context;
     g_tilesetTextureManager = textureManager;
-    g_assetAccessor = std::make_shared<CesiumAssetAccessor>();
+    auto accessor = std::make_shared<CesiumAssetAccessor>();
+    if (!cachePath.empty()) {
+        accessor->setCachePath(cachePath);
+    }
+    g_assetAccessor = accessor;
 
     Cesium3DTilesContent::registerAllTileContentTypes();
 }

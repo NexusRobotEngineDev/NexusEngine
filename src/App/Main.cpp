@@ -237,7 +237,8 @@ Status InitializeEngine(const EngineConfig& config) {
 #if ENABLE_VULKAN
     SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
 
-    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get());
+    std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
+    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), cesiumCachePath);
 
     Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
     auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();

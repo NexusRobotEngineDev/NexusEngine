@@ -2,6 +2,8 @@
 #include "../Bridge/Log.h"
 #include "../Bridge/ResourceLoader.h"
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 
 CesiumAssetResponse::CesiumAssetResponse(uint16_t statusCode, const std::string& contentType,
                                          const CesiumAsync::HttpHeaders& headers,
@@ -31,8 +33,72 @@ const CesiumAsync::HttpHeaders& CesiumAssetRequest::headers() const { return m_h
 
 const CesiumAsync::IAssetResponse* CesiumAssetRequest::response() const { return m_response.get(); }
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winreg.h>
+
+static void autoDetectProxy(std::string& host, int& port) {
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        DWORD enableProxy = 0;
+        DWORD dataSize = sizeof(enableProxy);
+        if (RegQueryValueExA(hKey, "ProxyEnable", nullptr, nullptr, reinterpret_cast<LPBYTE>(&enableProxy), &dataSize) == ERROR_SUCCESS) {
+            if (enableProxy) {
+                char proxyServer[512] = {0};
+                DWORD proxyServerSize = sizeof(proxyServer);
+                if (RegQueryValueExA(hKey, "ProxyServer", nullptr, nullptr, reinterpret_cast<LPBYTE>(proxyServer), &proxyServerSize) == ERROR_SUCCESS) {
+                    std::string proxyStr(proxyServer);
+
+                    auto parseHostPort = [&](const std::string& str) {
+                        size_t colon = str.find_last_of(':');
+                        if (colon != std::string::npos && colon < str.size() - 1) {
+                            host = str.substr(0, colon);
+                            try {
+                                port = std::stoi(str.substr(colon + 1));
+                            } catch (...) {
+                                port = -1;
+                                host = "";
+                            }
+                        }
+                    };
+
+                    if (proxyStr.find('=') != std::string::npos) {
+                        size_t httpPos = proxyStr.find("http=");
+                        if (httpPos != std::string::npos) {
+                            size_t endPos = proxyStr.find(';', httpPos);
+                            std::string httpProxy = proxyStr.substr(httpPos + 5, endPos == std::string::npos ? std::string::npos : endPos - (httpPos + 5));
+                            parseHostPort(httpProxy);
+                        } else {
+                            size_t eqPos = proxyStr.find('=');
+                            size_t endPos = proxyStr.find(';');
+                            std::string proxy = proxyStr.substr(eqPos + 1, endPos == std::string::npos ? std::string::npos : endPos - (eqPos + 1));
+                            parseHostPort(proxy);
+                        }
+                    } else {
+                        parseHostPort(proxyStr);
+                    }
+                }
+            }
+        }
+        RegCloseKey(hKey);
+    }
+}
+#endif
+
 CesiumAssetAccessor::CesiumAssetAccessor(const std::string& proxyHost, int proxyPort)
-    : m_proxyHost(proxyHost), m_proxyPort(proxyPort) {}
+    : m_proxyHost(proxyHost), m_proxyPort(proxyPort) {
+#ifdef _WIN32
+    if (m_proxyHost.empty() && m_proxyPort <= 0) {
+        autoDetectProxy(m_proxyHost, m_proxyPort);
+        if (!m_proxyHost.empty()) {
+            NX_LOG_INFO("Auto-detected Windows Proxy: {}:{}", m_proxyHost, m_proxyPort);
+        }
+    }
+#endif
+}
 
 CesiumAsync::Future<std::shared_ptr<CesiumAsync::IAssetRequest>> CesiumAssetAccessor::get(
     const CesiumAsync::AsyncSystem& asyncSystem, const std::string& url, const std::vector<THeader>& headers) {
@@ -77,7 +143,7 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
     std::vector<uint8_t> responseData;
     uint16_t statusCode = 0;
 
-    if (url.find("file://") == 0 || url.find("http") != 0) {
+    if (url.find("file://") == 0 || (url.find("http") != 0 && url.find("https") != 0)) {
         std::string localPath = url;
         if (url.find("file://") == 0) {
             localPath = url.substr(7);
@@ -95,50 +161,114 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
         } else {
             statusCode = 404;
         }
+
     } else {
-        auto pos = url.find("://");
-        auto pathPos = url.find('/', pos + 3);
-        std::string host = url.substr(0, pathPos);
-        std::string path = pathPos == std::string::npos ? "/" : url.substr(pathPos);
+        std::string cacheKey;
+        std::vector<THeader> cleanHeaders;
+        cleanHeaders.reserve(headers.size());
 
-        httplib::Client client(host.c_str());
-        if (!m_proxyHost.empty() && m_proxyPort > 0) {
-            client.set_proxy(m_proxyHost.c_str(), m_proxyPort);
-        }
-        client.set_follow_location(true);
-
-        httplib::Headers httpHeaders;
-        CesiumAsync::HttpHeaders requestHeadersMap;
         for (const auto& h : headers) {
-            if (h.first == "Accept-Encoding") continue;
-
-            httpHeaders.insert({h.first, h.second});
-            requestHeadersMap[h.first] = h.second;
+            if (h.first == "X-Cesium-Cache-Key") {
+                cacheKey = h.second;
+            } else {
+                cleanHeaders.push_back(h);
+            }
         }
 
-        auto res = (verb == "GET")
-            ? client.Get(path.c_str(), httpHeaders)
-            : client.Post(path.c_str(), httpHeaders, reinterpret_cast<const char*>(contentPayload.data()),
-                          contentPayload.size(), "application/octet-stream");
+        bool isJson = (url.find(".json") != std::string::npos);
 
-        if (res) {
-            statusCode = static_cast<uint16_t>(res->status);
-            std::string contentEncoding = "";
-            for (const auto& header : res->headers) {
-                responseHeaders[header.first] = header.second;
-                if (header.first == "Content-Encoding") {
-                    contentEncoding = header.second;
+        std::string cacheFilePath;
+        if (!m_cachePath.empty()) {
+            std::string extension = "bin";
+            auto lastDot = url.find_last_of('.');
+            auto lastQuery = url.find_last_of('?');
+            if (lastDot != std::string::npos) {
+                if (lastQuery != std::string::npos && lastQuery > lastDot) {
+                    extension = url.substr(lastDot + 1, lastQuery - lastDot - 1);
+                } else {
+                    extension = url.substr(lastDot + 1);
                 }
             }
-            contentType = extractContentType(res->headers);
-            responseData.assign(res->body.begin(), res->body.end());
 
-            std::string snippet = res->body.substr(0, std::min<size_t>(res->body.size(), 100));
-            NX_LOG_INFO("Cesium HTTP: {} -> Status: {}, Type: {}, Enc: {}, Size: {}, Prefix: {}",
-                url, statusCode, contentType, contentEncoding, res->body.size(), snippet);
-        } else {
-            statusCode = 0;
-            NX_LOG_ERROR("HTTP Request failed: {} - Err: {}", url, httplib::to_string(res.error()));
+            std::filesystem::path dirPath = std::filesystem::path(m_cachePath);
+            if (!cacheKey.empty()) {
+                cacheFilePath = (dirPath / ("bbox_" + cacheKey + "." + extension)).string();
+            } else {
+                cacheFilePath = (dirPath / ("url_" + std::to_string(std::hash<std::string>{}(url)) + "." + extension)).string();
+            }
+        }
+
+        bool loadedFromCache = false;
+        if (!cacheFilePath.empty() && !isJson && std::filesystem::exists(cacheFilePath)) {
+            auto fileStatus = Nexus::ResourceLoader::loadBinaryFile(cacheFilePath);
+            if (fileStatus.ok()) {
+                responseData = std::move(fileStatus.value());
+                statusCode = 200;
+                loadedFromCache = true;
+
+                if (url.find(".glb") != std::string::npos || url.find(".gltf") != std::string::npos) {
+                    contentType = "model/gltf-binary";
+                } else if (url.find(".b3dm") != std::string::npos) {
+                    contentType = "application/octet-stream";
+                } else if (isJson) {
+                    contentType = "application/json";
+                }
+                responseHeaders["Content-Type"] = contentType;
+            }
+        }
+
+        if (!loadedFromCache) {
+            auto pos = url.find("://");
+            auto pathPos = url.find('/', pos + 3);
+            std::string host = url.substr(0, pathPos);
+            std::string path = pathPos == std::string::npos ? "/" : url.substr(pathPos);
+
+            httplib::Client client(host.c_str());
+            if (!m_proxyHost.empty() && m_proxyPort > 0) {
+                client.set_proxy(m_proxyHost.c_str(), m_proxyPort);
+            }
+            client.set_follow_location(true);
+
+            httplib::Headers httpHeaders;
+            for (const auto& h : cleanHeaders) {
+                if (h.first == "Accept-Encoding") continue;
+                httpHeaders.insert({h.first, h.second});
+            }
+
+            auto res = (verb == "GET")
+                ? client.Get(path.c_str(), httpHeaders)
+                : client.Post(path.c_str(), httpHeaders, reinterpret_cast<const char*>(contentPayload.data()),
+                              contentPayload.size(), "application/octet-stream");
+
+            if (res) {
+                statusCode = static_cast<uint16_t>(res->status);
+                std::string contentEncoding = "";
+                for (const auto& header : res->headers) {
+                    responseHeaders[header.first] = header.second;
+                    if (header.first == "Content-Encoding") {
+                        contentEncoding = header.second;
+                    }
+                }
+                contentType = extractContentType(res->headers);
+                responseData.assign(res->body.begin(), res->body.end());
+
+                if (!cacheFilePath.empty() && statusCode >= 200 && statusCode < 300) {
+                    try {
+                        std::filesystem::path cp(cacheFilePath);
+                        std::filesystem::create_directories(cp.parent_path());
+                        std::ofstream ofs(cacheFilePath, std::ios::binary);
+                        if (ofs) {
+                            ofs.write(reinterpret_cast<const char*>(responseData.data()), responseData.size());
+                        }
+                    } catch (...) {
+                        NX_LOG_WARN("Failed to write to cache: {}", cacheFilePath);
+                    }
+                }
+
+            } else {
+                statusCode = 0;
+                NX_LOG_ERROR("HTTP Request failed: {} - Err: {}", url, httplib::to_string(res.error()));
+            }
         }
     }
 

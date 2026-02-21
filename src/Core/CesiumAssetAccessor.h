@@ -68,6 +68,8 @@ public:
      */
     explicit CesiumAssetAccessor(const std::string& proxyHost = "", int proxyPort = -1);
 
+    void setCachePath(const std::string& path) { m_cachePath = path; }
+
     ~CesiumAssetAccessor() override = default;
 
     CesiumAsync::Future<std::shared_ptr<CesiumAsync::IAssetRequest>> get(
@@ -87,6 +89,7 @@ public:
 private:
     std::string m_proxyHost;
     int m_proxyPort;
+    std::string m_cachePath;
 
     std::shared_ptr<CesiumAsync::IAssetRequest> executeRequest(
         const std::string& verb,
