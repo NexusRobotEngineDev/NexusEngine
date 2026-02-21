@@ -541,16 +541,12 @@ void RunMainLoop() {
 
             auto prepStartTime = std::chrono::high_resolution_clock::now();
             if (g_scene) {
-                if (g_rosBridge && g_physicsSystem) {
-                    g_rosBridge->applyIncomingCommands(g_physicsSystem);
-                }
                 HierarchySystem::update(g_scene->getRegistry());
 
                 Cesium3DTilesetSystem::update(g_scene->getRegistry(), deltaTime);
 
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
-                    g_rosBridge->publishReplicas(g_scene->getRegistry(), g_physicsSystem);
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
                 }
             }

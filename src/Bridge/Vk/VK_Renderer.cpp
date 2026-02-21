@@ -496,6 +496,10 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                 auto& mesh = meshView.get<MeshComponent>(entity);
                 auto& transform = meshView.get<TransformComponent>(entity);
 
+                if (transform.worldMatrix[0] == 0.0f && transform.worldMatrix[5] == 0.0f && transform.worldMatrix[10] == 0.0f) {
+                    continue;
+                }
+
                 std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
 
                 IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
