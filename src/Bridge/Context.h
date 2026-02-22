@@ -14,6 +14,10 @@
     #include "MuJoCo/MuJoCo_PhysicsSystem.h"
 #endif
 
+#if ENABLE_JOLT
+    #include "Jolt/Jolt_PhysicsSystem.h"
+#endif
+
 namespace Nexus {
 
 #if GRAPHICS_BACKEND_COUNT == 1
@@ -41,6 +45,9 @@ namespace Nexus {
     #if ENABLE_MUJOCO
         using PhysicsSystem = ::Nexus::MuJoCo_PhysicsSystem;
         using PhysicsSystemPtr = ::Nexus::MuJoCo_PhysicsSystem*;
+    #elif ENABLE_JOLT
+        using PhysicsSystem = ::Nexus::Jolt_PhysicsSystem;
+        using PhysicsSystemPtr = ::Nexus::Jolt_PhysicsSystem*;
     #endif
 #else
     using PhysicsSystem = ::Nexus::IPhysicsSystem;

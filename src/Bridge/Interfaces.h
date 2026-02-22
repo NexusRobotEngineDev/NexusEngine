@@ -94,11 +94,49 @@ public:
     virtual Status loadModel(const std::string& path) = 0;
     virtual void update(float deltaTime) = 0;
     virtual void shutdown() = 0;
+    virtual void forceStartPhysics() {}
+
+    struct ContactData {
+        std::array<float, 3> position;
+        std::array<float, 3> normal;
+        float depth;
+        int geomIdx1{-1};
+        int geomIdx2{-1};
+    };
+
+    struct GeomSyncData {
+        int geomId;
+        int type;
+        float size[3];
+        float pos[3];
+        float rot[4];
+    };
+
+    /**
+     * @brief 提取动物理核心（MuJoCo）侧活动的几何体信息
+     */
+    virtual void getActiveGeoms(std::vector<GeomSyncData>& outGeoms) {}
+
+    /**
+     * @brief 同步这些几何体到外部碰撞检测核心（Jolt）作为代理体
+     */
+    virtual void syncKinematicProxies(const std::vector<GeomSyncData>& geoms) {}
+
+    /**
+     * @brief 注入接触点数据，用于与外部碰撞引擎（如 Jolt）进行混合物理模拟同步
+     */
+    virtual void injectContacts(const std::vector<ContactData>& contacts) {}
 
     /**
      * @brief 获取指定名称刚体的世界坐标与旋转
      */
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) = 0;
+
+    /**
+     * @brief 获取指定名称几何体的世界坐标与旋转及ID
+     */
+    virtual bool getGeomTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot, int& outGeomId) { return false; }
+
 
     /**
      * @brief 为指定名称的关节施加 PD 控制与前馈力矩

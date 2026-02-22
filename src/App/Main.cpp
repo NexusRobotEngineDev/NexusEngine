@@ -3,11 +3,16 @@
 #include "ECS.h"
 #include "Entity.h"
 #include "Log.h"
-#include "PhysicsThread.h"
 #include "ResourceLoader.h"
 #include "MuJoCo/MuJoCo_PhysicsSystem.h"
+#include "Jolt/Jolt_PhysicsSystem.h"
 #include <cmath>
 #include <filesystem>
+#include <exception>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -50,12 +55,13 @@ namespace Nexus {
     extern std::atomic<float> g_RenderStats_RenderPrepTime;
 }
 
+Jolt_PhysicsSystem* g_joltSystem = nullptr;
+
 namespace {
 WindowPtr g_window = nullptr;
 ContextPtr g_context = nullptr;
 std::unique_ptr<WindowThread> g_windowThread;
 std::unique_ptr<RHIThread> g_rhiThread;
-std::unique_ptr<PhysicsThread> g_physicsThread;
 std::unique_ptr<Registry> g_ecsRegistry;
 PhysicsSystemPtr g_physicsSystem = nullptr;
 std::atomic<bool> g_quit{false};
@@ -264,20 +270,33 @@ Status InitializeEngine(const EngineConfig& config) {
 #endif
 
     std::string physicsPath;
-    g_physicsSystem = new PhysicsSystem();
-    auto physicsStatus = g_physicsSystem->initialize();
-    if (!physicsStatus.ok()) {
-        NX_CORE_WARN("Physics system unavailable: {}", physicsStatus.message());
-        delete g_physicsSystem;
-        g_physicsSystem = nullptr;
-    } else {
-        physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
-        auto loadStatus = g_physicsSystem->loadModel(physicsPath);
-        if (!loadStatus.ok()) {
-            NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
+#if ENABLE_JOLT
+    g_joltSystem = new Jolt_PhysicsSystem();
+    if (auto status = g_joltSystem->initialize(); !status.ok()) {
+        NX_CORE_WARN("Jolt Physics unavailable: {}", status.message());
+        delete g_joltSystem;
+        g_joltSystem = nullptr;
+    }
+#endif
+#if ENABLE_MUJOCO
+    g_physicsSystem = new MuJoCo_PhysicsSystem();
+#else
+    g_physicsSystem = nullptr;
+#endif
+    Status physicsStatus = absl::InternalError("No physics engine loaded");
+    if (g_physicsSystem) {
+        physicsStatus = g_physicsSystem->initialize();
+        if (!physicsStatus.ok()) {
+            NX_CORE_WARN("Physics system unavailable: {}", physicsStatus.message());
+            delete g_physicsSystem;
+            g_physicsSystem = nullptr;
+        } else {
+            physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
+            auto loadStatus = g_physicsSystem->loadModel(physicsPath);
+            if (!loadStatus.ok()) {
+                NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
+            }
         }
-        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem, 1000.0f);
-        g_physicsThread->startThread();
     }
 
     g_rosBridge = std::make_unique<RosBridgeSystem>();
@@ -317,7 +336,6 @@ Status InitializeEngine(const EngineConfig& config) {
 void ShutdownEngine() {
     if (g_rhiThread) g_rhiThread->stop();
 
-    if (g_physicsThread) g_physicsThread->stop();
 
     if (g_physicsSystem) {
         g_physicsSystem->shutdown();
@@ -545,6 +563,25 @@ void RunMainLoop() {
 
                 Cesium3DTilesetSystem::update(g_scene->getRegistry(), deltaTime);
 
+#if ENABLE_JOLT
+                if (g_joltSystem) {
+#if ENABLE_MUJOCO
+                    if (g_physicsSystem) {
+                        std::vector<IPhysicsSystem::GeomSyncData> geoms;
+                        g_physicsSystem->getActiveGeoms(geoms);
+                        g_joltSystem->syncKinematicProxies(geoms);
+                    }
+#endif
+                    g_joltSystem->update(deltaTime);
+                }
+#endif
+
+#if ENABLE_MUJOCO
+                if (g_physicsSystem) {
+                    g_physicsSystem->update(deltaTime);
+                }
+#endif
+
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
@@ -619,12 +656,33 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    std::set_terminate([]() {
+        NX_CORE_CRITICAL("std::terminate() called!");
+        Log::getCoreLogger()->flush();
+        std::abort();
+    });
+
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter([](EXCEPTION_POINTERS* ep) -> LONG {
+        if (ep && ep->ExceptionRecord) {
+            NX_CORE_CRITICAL("UNHANDLED EXCEPTION: Code=0x{:08X}, Addr=0x{:016X}",
+                ep->ExceptionRecord->ExceptionCode,
+                (uintptr_t)ep->ExceptionRecord->ExceptionAddress);
+        } else {
+            NX_CORE_CRITICAL("UNHANDLED EXCEPTION (no details)");
+        }
+        Log::getCoreLogger()->flush();
+        return EXCEPTION_CONTINUE_SEARCH;
+    });
+#endif
+
     if (auto status = InitializeEngine(config); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());
         return -1;
     }
 
     RunMainLoop();
+
     Log::info("Nexus Engine Shutting down...");
     ShutdownEngine();
 

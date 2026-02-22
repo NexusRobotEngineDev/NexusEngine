@@ -23,8 +23,12 @@ public:
     virtual void shutdown() override;
 
     virtual bool getBodyTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot) override;
+    virtual bool getGeomTransform(const std::string& name, std::array<float, 3>& outPos, std::array<float, 4>& outRot, int& outGeomId) override;
     virtual void setJointControl(const std::string& jointName, float q, float dq, float kp, float kd, float tau) override;
     virtual std::vector<std::string> getActuatorNames() const override;
+    virtual void injectContacts(const std::vector<ContactData>& contacts) override;
+    virtual void getActiveGeoms(std::vector<GeomSyncData>& outGeoms) override;
+    virtual void forceStartPhysics() override;
     void resetSimulation();
 
     using StateCallback = std::function<void(mjModel*, mjData*)>;
@@ -49,10 +53,12 @@ private:
     std::unordered_map<std::string, int> m_actuatorName2Id;
     std::unordered_map<int, JointCmd> m_pendingCommands;
     std::mutex m_cmdMutex;
+    std::vector<ContactData> m_externalContacts;
 
     StateCallback m_stateCallback;
     int m_stateDecimation = 7;
     int m_substepCounter = 0;
+    std::atomic<bool> m_forceStart{false};
 };
 
 } // namespace Nexus

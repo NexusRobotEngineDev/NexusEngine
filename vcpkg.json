@@ -4,10 +4,14 @@
   "dependencies": [
     "abseil",
     "assimp",
+    "cppzmq",
+    "draco",
     "entt",
+    "glm",
     "gtest",
     "mujoco",
     "nlohmann-json",
+    "openssl",
     "rmlui",
     {
       "name": "sdl3",
@@ -17,15 +21,12 @@
     },
     "shaderc",
     "spdlog",
+    "sqlite3",
     "stb",
     "tinyxml2",
+    "uriparser",
     "vulkan",
     "zeromq",
-    "cppzmq",
-    "uriparser",
-    "sqlite3",
-    "draco",
-    "glm",
-    "openssl"
+    "joltphysics"
   ]
 }

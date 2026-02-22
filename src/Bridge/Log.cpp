@@ -23,11 +23,11 @@ void Log::init() {
     logSinks[0]->set_pattern("%^[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v%$");
     logSinks[1]->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
 
-    spdlog::init_thread_pool(8192, 1);
-    s_coreLogger = std::make_shared<spdlog::async_logger>("NEXUS", begin(logSinks), end(logSinks), spdlog::thread_pool(), spdlog::async_overflow_policy::block);
+    s_coreLogger = std::make_shared<spdlog::logger>("NEXUS", begin(logSinks), end(logSinks));
     spdlog::register_logger(s_coreLogger);
     s_coreLogger->set_level(spdlog::level::trace);
     s_coreLogger->flush_on(spdlog::level::trace);
+    spdlog::flush_on(spdlog::level::trace);
 }
 
 } // namespace Nexus

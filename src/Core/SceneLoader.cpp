@@ -92,13 +92,6 @@ Status SceneLoader::createEntities(
         NX_CORE_INFO("加载机器人: {}", urdfPath);
     }
 
-    if (config.hasGround && renderer) {
-        Entity floor = scene->createEntity("Floor");
-        auto& ft = floor.getComponent<TransformComponent>();
-        ft.position = {0.0f, 0.0f, 0.0f};
-        ft.scale = {config.groundSize[0], 0.01f, config.groundSize[1]};
-        floor.addComponent<MeshComponent>(renderer->getCubeMeshComponent());
-    }
 
     for (size_t i = 0; i < config.objects.size(); ++i) {
         const auto& obj = config.objects[i];

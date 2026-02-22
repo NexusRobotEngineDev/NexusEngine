@@ -3,6 +3,7 @@ option(ENABLE_VULKAN "Enable Vulkan backend" ON)
 option(ENABLE_SDL "Enable SDL backend" ON)
 option(ENABLE_RMLUI "Enable RmlUi" ON)
 option(ENABLE_MUJOCO "Enable MuJoCo Physics" ON)
+option(ENABLE_JOLT "Enable Jolt Physics" ON)
 
 set(GRAPHICS_BACKEND_COUNT 0)
 if(ENABLE_VULKAN)
@@ -20,6 +21,10 @@ set(PHYSICS_BACKEND_COUNT 0)
 if(ENABLE_MUJOCO)
     math(EXPR PHYSICS_BACKEND_COUNT "${PHYSICS_BACKEND_COUNT} + 1")
     find_package(mujoco CONFIG REQUIRED)
+endif()
+
+if(ENABLE_JOLT)
+    math(EXPR PHYSICS_BACKEND_COUNT "${PHYSICS_BACKEND_COUNT} + 1")
 endif()
 
 if(ENABLE_RMLUI)
@@ -63,6 +68,14 @@ if(ENABLE_MUJOCO)
     list(APPEND BRIDGE_SOURCES ${MUJOCO_SOURCES})
 endif()
 
+if(ENABLE_JOLT)
+    file(GLOB JOLT_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/Jolt/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Jolt/*.cpp"
+    )
+    list(APPEND BRIDGE_SOURCES ${JOLT_SOURCES})
+endif()
+
 add_library(BridgeImpl STATIC ${BRIDGE_SOURCES})
 target_link_libraries(BridgeImpl PUBLIC Bridge absl::status absl::statusor EnTT::EnTT httplib::httplib)
 
@@ -87,4 +100,9 @@ endif()
 if(ENABLE_MUJOCO)
     target_compile_definitions(BridgeImpl PUBLIC ENABLE_MUJOCO)
     target_link_libraries(BridgeImpl PUBLIC mujoco::mujoco)
+endif()
+
+if(ENABLE_JOLT)
+    target_compile_definitions(BridgeImpl PUBLIC ENABLE_JOLT)
+    target_link_libraries(BridgeImpl PUBLIC Jolt::Jolt)
 endif()

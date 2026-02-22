@@ -33,6 +33,7 @@ struct CesiumTileRenderResources {
     std::vector<CesiumPrimitiveRenderData> primitives;
     std::vector<entt::entity> entities;
     std::vector<std::string> textureKeys;
+    std::vector<uint32_t> physicsBodyIds;
     glm::dmat4 tileTransform = glm::dmat4(1.0);
 };
 

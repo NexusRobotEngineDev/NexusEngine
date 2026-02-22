@@ -14,6 +14,11 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#if ENABLE_JOLT
+#include "../Bridge/Jolt/Jolt_PhysicsSystem.h"
+extern Nexus::Jolt_PhysicsSystem* g_joltSystem;
+#endif
+
 using namespace Nexus;
 using namespace CesiumGltf;
 
@@ -378,10 +383,18 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
     std::unordered_map<std::string, ITexture*> loadedTextures;
     for (auto& img : pParsedTile->images) {
         if (!img.data.pixels.empty() && m_textureManager) {
-            ITexture* tex = m_textureManager->createTextureFromMemory(img.textureKey, img.data);
-            if (tex) {
-                loadedTextures[img.textureKey] = tex;
-                pRenderResources->textureKeys.push_back(img.textureKey);
+            try {
+                ITexture* tex = m_textureManager->createTextureFromMemory(img.textureKey, img.data);
+                if (tex) {
+                    loadedTextures[img.textureKey] = tex;
+                    pRenderResources->textureKeys.push_back(img.textureKey);
+                }
+            } catch (const std::exception& e) {
+                NX_CORE_CRITICAL("TEXTURE CREATION CRASH: {}", e.what());
+                Log::getCoreLogger()->flush();
+            } catch (...) {
+                NX_CORE_CRITICAL("TEXTURE CREATION UNKNOWN CRASH");
+                Log::getCoreLogger()->flush();
             }
         }
     }
@@ -432,16 +445,63 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             prim.vertices[vi * 8 + 7] = static_cast<float>(localNorm.z);
         }
 
+#if 0
+#if ENABLE_JOLT
+        if (g_joltSystem && vertCount >= 3) {
+            bool indicesValid = true;
+            for (uint32_t idx : prim.indices) {
+                if (idx >= vertCount) {
+                    indicesValid = false;
+                    break;
+                }
+            }
+
+            if (indicesValid) {
+                std::vector<float> joltVerts;
+                joltVerts.reserve(vertCount * 3);
+                for (size_t vi = 0; vi < vertCount; vi++) {
+                    joltVerts.push_back(prim.vertices[vi * 8 + 0]);
+                    joltVerts.push_back(prim.vertices[vi * 8 + 1]);
+                    joltVerts.push_back(prim.vertices[vi * 8 + 2]);
+                }
+                std::array<float, 16> identityTransform = {
+                    1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+                };
+                uint32_t bodyId = g_joltSystem->addStaticTriangleMesh(joltVerts, prim.indices, identityTransform);
+                if (bodyId != (uint32_t)-1) {
+                    pRenderResources->physicsBodyIds.push_back(bodyId);
+                }
+            } else {
+                NX_CORE_WARN("Cesium GLTF mesh skipped for Physics due to out-of-bounds indices");
+            }
+        }
+#endif
+#endif
+
         size_t vSize = prim.vertices.size() * sizeof(float);
         size_t iSize = prim.indices.size() * sizeof(uint32_t);
 
-        if (vSize > 0) {
-            renderData.vertexBuffer = m_context->createBuffer(vSize, 0x0082, 0x0006);
-            (void)renderData.vertexBuffer->uploadData(prim.vertices.data(), vSize, 0);
-        }
-        if (iSize > 0) {
-            renderData.indexBuffer = m_context->createBuffer(iSize, 0x0042, 0x0006);
-            (void)renderData.indexBuffer->uploadData(prim.indices.data(), iSize, 0);
+        try {
+            if (vSize > 0) {
+                renderData.vertexBuffer = m_context->createBuffer(vSize, 0x0082, 0x0006);
+                if (renderData.vertexBuffer) {
+                    (void)renderData.vertexBuffer->uploadData(prim.vertices.data(), vSize, 0);
+                }
+            }
+            if (iSize > 0) {
+                renderData.indexBuffer = m_context->createBuffer(iSize, 0x0042, 0x0006);
+                if (renderData.indexBuffer) {
+                    (void)renderData.indexBuffer->uploadData(prim.indices.data(), iSize, 0);
+                }
+            }
+        } catch (const std::exception& e) {
+            NX_CORE_CRITICAL("VULKAN BUFFER CRASH: {} (vSize={}, iSize={})", e.what(), vSize, iSize);
+            Log::getCoreLogger()->flush();
+            continue;
+        } catch (...) {
+            NX_CORE_CRITICAL("VULKAN BUFFER UNKNOWN CRASH (vSize={}, iSize={})", vSize, iSize);
+            Log::getCoreLogger()->flush();
+            continue;
         }
 
         pRenderResources->primitives.push_back(std::move(renderData));
@@ -501,7 +561,7 @@ void CesiumPrepareRendererResources::free(
         NX_CORE_WARN("[CesiumFree] Freeing tile: {} entities, renderRes={}",
             pRenderResources->entities.size(), (void*)pRenderResources);
         for (auto e : pRenderResources->entities) {
-            if (m_scene->getRegistry().has<CesiumGltfComponent>(e)) {
+            if (m_scene->getRegistry().valid(e)) {
                 m_scene->destroyEntity(Entity(e, &m_scene->getRegistry()));
             }
         }
@@ -510,6 +570,13 @@ void CesiumPrepareRendererResources::free(
                 m_textureManager->removeTexture(key);
             }
         }
+#if ENABLE_JOLT
+        if (g_joltSystem) {
+            for (uint32_t bId : pRenderResources->physicsBodyIds) {
+                g_joltSystem->removeBody(bId);
+            }
+        }
+#endif
         delete pRenderResources;
     }
 }

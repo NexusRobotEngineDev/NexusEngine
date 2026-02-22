@@ -28,6 +28,7 @@ endif()
 find_package(absl CONFIG REQUIRED)
 find_package(EnTT CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
 
 include(FetchContent)
 

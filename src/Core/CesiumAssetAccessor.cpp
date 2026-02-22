@@ -133,9 +133,8 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
             contentType = extractContentType(res->headers);
             responseData.assign(res->body.begin(), res->body.end());
 
-            std::string snippet = res->body.substr(0, std::min<size_t>(res->body.size(), 100));
-            NX_LOG_INFO("Cesium HTTP: {} -> Status: {}, Type: {}, Enc: {}, Size: {}, Prefix: {}",
-                url, statusCode, contentType, contentEncoding, res->body.size(), snippet);
+            NX_LOG_INFO("Cesium HTTP: {} -> Status: {}, Size: {} bytes",
+                url, statusCode, res->body.size());
         } else {
             statusCode = 0;
             NX_LOG_ERROR("HTTP Request failed: {} - Err: {}", url, httplib::to_string(res.error()));
