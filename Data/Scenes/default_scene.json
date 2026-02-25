@@ -1,7 +1,11 @@
 {
   "name": "go2_training",
   "camera": {
-    "position": [1.2, 0.4, 1.8]
+    "position": [
+      1.2,
+      0.4,
+      1.8
+    ]
   },
   "robot": {
     "urdf": "Models/go2/go2_description.urdf",

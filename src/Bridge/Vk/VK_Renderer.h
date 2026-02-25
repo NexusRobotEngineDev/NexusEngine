@@ -13,6 +13,7 @@
 #include "VK_UIBridge.h"
 #include "../ECS.h"
 #include "../../Core/Components.h"
+#include "VK_Buffer.h"
 
 namespace Nexus {
 
@@ -96,31 +97,33 @@ private:
     Status createSwapchainTextures();
     std::unique_ptr<VK_Texture> m_whiteTexture;
     std::unique_ptr<VK_Texture> m_testTexture;
-    std::unique_ptr<VK_IndirectBuffer> m_indirectBuffer;
+    std::vector<std::unique_ptr<VK_IndirectBuffer>> m_indirectBuffers;
 
 #ifdef ENABLE_RMLUI
     std::unique_ptr<VK_UIBridge> m_uiBridge;
     SPSCQueue<SDL_Event, 256> m_eventQueue;
 #endif
 
-    struct BindlessConstants {
-    uint32_t textureIndex;
-    uint32_t normalIndex;
-    uint32_t metallicRoughnessIndex;
-    uint32_t occlusionIndex;
-    uint32_t emissiveIndex;
-    uint32_t samplerIndex;
-    uint32_t _pad0[2];
+    struct ObjectData {
+        uint32_t textureIndex;
+        uint32_t normalIndex;
+        uint32_t metallicRoughnessIndex;
+        uint32_t occlusionIndex;
+        uint32_t emissiveIndex;
+        uint32_t samplerIndex;
+        uint32_t _pad0[2];
 
-    std::array<float, 4> albedoFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    float _pad1[2];
+        std::array<float, 4> albedoFactor;
+        float metallicFactor;
+        float roughnessFactor;
+        float _pad1[2];
 
-    std::array<float, 16> mvp;
-    std::array<float, 4> highlightColor;
-};
+        std::array<float, 16> mvp;
+        std::array<float, 16> worldMatrix;
+        std::array<float, 4> highlightColor;
+    };
 
+    std::unique_ptr<VK_Buffer> m_objectDataBuffer;
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 public:

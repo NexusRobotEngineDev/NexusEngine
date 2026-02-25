@@ -9,9 +9,10 @@ struct PSInput {
     [[vk::location(0)]] float3 WorldPos : POSITION0;
     [[vk::location(1)]] float3 Normal : NORMAL0;
     [[vk::location(2)]] float2 UV : TEXCOORD0;
+    [[vk::location(3)]] uint InstanceID : SV_InstanceID;
 };
 
-struct BindlessConstants {
+struct ObjectData {
     uint textureIndex;
     uint normalIndex;
     uint metallicRoughnessIndex;
@@ -25,11 +26,18 @@ struct BindlessConstants {
     float2 padding;
 
     float4x4 mvp;
+    float4x4 normalMatrix;
     float4 highlightColor;
 };
 
+struct PushParams {
+    uint frameOffset;
+};
+
 [[vk::push_constant]]
-ConstantBuffer<BindlessConstants> constants;
+ConstantBuffer<PushParams> pushParams;
+
+StructuredBuffer<ObjectData> objects : register(t2, space0);
 
 [[vk::binding(0, 0)]]
 SamplerState samplers[];
@@ -37,17 +45,21 @@ SamplerState samplers[];
 [[vk::binding(1, 0)]]
 Texture2D textures[];
 
-PSInput VSMain(VSInput input) {
+PSInput VSMain(VSInput input, uint instanceID : SV_InstanceID) {
     PSInput output;
-    output.Pos = float4(input.Pos, 1.0) * constants.mvp;
+    uint objIndex = pushParams.frameOffset + instanceID;
+    output.Pos = mul(objects[objIndex].mvp, float4(input.Pos, 1.0));
     output.WorldPos = input.Pos;
-    output.Normal = input.Normal;
+    output.Normal = normalize(mul((float3x3)objects[objIndex].normalMatrix, input.Normal));
     output.UV = input.UV;
+    output.InstanceID = objIndex;
     return output;
 }
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    float4 albedo = textures[constants.textureIndex].Sample(samplers[constants.samplerIndex], input.UV) * constants.albedoFactor;
+    ObjectData obj = objects[input.InstanceID];
+
+    float4 albedo = textures[obj.textureIndex].Sample(samplers[obj.samplerIndex], input.UV) * obj.albedoFactor;
 
     float3 lightDir = normalize(float3(1.0, 1.0, 1.0));
     float3 viewDir = normalize(float3(0.0, 0.0, 1.0));
@@ -56,13 +68,13 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 N = normalize(input.Normal);
     float diff = max(dot(N, lightDir), 0.0);
 
-    float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * constants.metallicFactor;
+    float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * obj.metallicFactor;
 
     float ambient = 0.2;
     float3 finalColor = albedo.rgb * (diff + ambient) + spec;
 
-    if (constants.highlightColor.a > 0.0) {
-        finalColor = lerp(finalColor, constants.highlightColor.rgb, constants.highlightColor.a);
+    if (obj.highlightColor.a > 0.0) {
+        finalColor = lerp(finalColor, obj.highlightColor.rgb, obj.highlightColor.a);
     }
 
     return float4(finalColor, albedo.a);

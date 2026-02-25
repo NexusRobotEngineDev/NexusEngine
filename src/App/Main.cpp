@@ -221,6 +221,7 @@ Status InitializeEngine(const EngineConfig& config) {
     g_editorUIManager->initialize(g_renderer->getBridgeRenderer()->getUIBridge());
     g_editorUIManager->loadLayout("Data/UI/editor_layout.json");
 
+    NX_CORE_INFO("Main: Initializing TextureManager");
     g_textureManager = std::make_unique<TextureManager>(vkContext);
 #endif
 
@@ -235,11 +236,14 @@ Status InitializeEngine(const EngineConfig& config) {
     g_scene = std::make_unique<Scene>(sceneConfig.sceneName);
 
 #if ENABLE_VULKAN
+    NX_CORE_INFO("Main: Calling SceneLoader::createEntities");
     SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
 
+    NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
     std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
     Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), cesiumCachePath);
 
+    NX_CORE_INFO("Main: Creating Cesium Test Entity");
     Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
     auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
     georef.m_longitude = 121.5;
@@ -264,6 +268,7 @@ Status InitializeEngine(const EngineConfig& config) {
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
 #endif
 
+    NX_CORE_INFO("Main: Init Physics System");
     std::string physicsPath;
     g_physicsSystem = new PhysicsSystem();
     auto physicsStatus = g_physicsSystem->initialize();
@@ -273,14 +278,17 @@ Status InitializeEngine(const EngineConfig& config) {
         g_physicsSystem = nullptr;
     } else {
         physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
+        NX_CORE_INFO("Main: Loading Physics model {}", physicsPath);
         auto loadStatus = g_physicsSystem->loadModel(physicsPath);
         if (!loadStatus.ok()) {
             NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
         }
         g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem, 1000.0f);
+        NX_CORE_INFO("Main: Starting PhysicsThread");
         g_physicsThread->startThread();
     }
 
+    NX_CORE_INFO("Main: Starting ROS Bridge");
     g_rosBridge = std::make_unique<RosBridgeSystem>();
     if (auto status = g_rosBridge->initialize(); !status.ok()) {
         NX_CORE_WARN("Failed to start ROS Bridge: {}", status.message());

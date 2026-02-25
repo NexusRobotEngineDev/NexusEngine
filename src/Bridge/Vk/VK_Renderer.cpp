@@ -1,5 +1,6 @@
 #include "VK_Renderer.h"
 #include "VK_ShaderCompiler.h"
+#include "VK_BindlessManager.h"
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
@@ -56,10 +57,15 @@ void VK_Renderer::shutdown() {
 }
 
 Status VK_Renderer::initialize() {
+    NX_CORE_INFO("VK_Renderer::initialize - 1: createCommandPool");
     if (auto status = createCommandPool(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 2: createGraphicsPipeline");
     if (auto status = createGraphicsPipeline(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
     if (auto status = createSyncObjects(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 5: createSwapchainTextures");
     if (auto status = createSwapchainTextures(); !status.ok()) return status;
 
     ImageData imageData;
@@ -82,23 +88,31 @@ Status VK_Renderer::initialize() {
     m_whiteTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_whiteTexture->create(whiteData, TextureUsage::Sampled));
 
+    NX_CORE_INFO("VK_Renderer::initialize - 6: create default textures");
     m_testTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
-    m_indirectBuffer = std::make_unique<VK_IndirectBuffer>(m_context);
-    DrawIndirectCommand drawCmd;
-    drawCmd.vertexCount = 3;
-    drawCmd.instanceCount = 1;
-    drawCmd.firstVertex = 0;
-    drawCmd.firstInstance = 0;
+    NX_CORE_INFO("VK_Renderer::initialize - 7: alloc indirect buffers");
+    m_indirectBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_indirectBuffers[i] = std::make_unique<VK_IndirectBuffer>(m_context);
+    }
 
-    std::vector<DrawIndirectCommand> commands = { drawCmd };
-    NX_RETURN_IF_ERROR(m_indirectBuffer->uploadDrawCommands(commands));
+    NX_CORE_INFO("VK_Renderer::initialize - 8: alloc objectDataBuffer");
+    m_objectDataBuffer = std::make_unique<VK_Buffer>(m_context);
+    size_t objCap = 100000;
+    NX_RETURN_IF_ERROR(m_objectDataBuffer->create(MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
 
+    NX_CORE_INFO("VK_Renderer::initialize - 9: updateStorageBuffer in BindlessManager");
+    m_context->getBindlessManager()->updateStorageBuffer(m_objectDataBuffer->getHandle(), MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData));
+
+    NX_CORE_INFO("VK_Renderer::initialize - 10: RML UI Init");
 #ifdef ENABLE_RMLUI
     m_uiBridge = std::make_unique<VK_UIBridge>(m_context, this);
     m_uiBridge->initialize(m_swapchain->getExtent().width, m_swapchain->getExtent().height);
 #endif
+
+    NX_CORE_INFO("VK_Renderer::initialize - DONE");
 
     return OkStatus();
 }
@@ -223,7 +237,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     vk::PushConstantRange pushConstantRange;
     pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(BindlessConstants);
+    pushConstantRange.size = sizeof(uint32_t);
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
@@ -491,7 +505,19 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
             size_t meshCount = 0;
             uint32_t totalTriangles = 0;
+            size_t objCap = 100000;
+            std::vector<ObjectData> frameObjects;
+            frameObjects.reserve(10000);
+
+            struct DrawBatch {
+                IBuffer* vb;
+                IBuffer* ib;
+                std::vector<DrawIndexedIndirectCommand> commands;
+            };
+            std::vector<DrawBatch> batches;
+
             uint32_t selectedId = m_selectedEntityId.load(std::memory_order_relaxed);
+
             for (auto entity : meshView) {
                 auto& mesh = meshView.get<MeshComponent>(entity);
                 auto& transform = meshView.get<TransformComponent>(entity);
@@ -504,60 +530,87 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
                 IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
                 IBuffer* currentIb = mesh.indexBuffer ? mesh.indexBuffer : globalIb;
-
                 if (!currentVb || !currentIb) continue;
 
-                vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(currentVb)->getHandle() };
-                vk::DeviceSize offsets[] = { 0 };
-                commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-                commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(currentIb)->getHandle(), 0, vk::IndexType::eUint32);
-
-                if (shouldLog) {
-                    std::string eName = "Unknown";
-                    if (registry->has<TagComponent>(entity)) {
-                        eName = registry->get<TagComponent>(entity).name;
-                    }
-                    NX_CORE_INFO("Drawing Component: entityID={} (Name={}), indexCount={}, vOffset={}, worldPos=({},{},{})",
-                                 (uint32_t)entity, eName, mesh.indexCount, mesh.vertexOffset,
-                                 transform.position[0], transform.position[1], transform.position[2]);
-                    NX_CORE_INFO("MVP Matrix (Col-Major):");
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[0], mvp[4], mvp[8], mvp[12]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[1], mvp[5], mvp[9], mvp[13]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[2], mvp[6], mvp[10], mvp[14]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[3], mvp[7], mvp[11], mvp[15]);
-                }
-
-                BindlessConstants constants = {};
+                ObjectData obj = {};
                 if (mesh.albedoTexture < VK_BindlessManager::MAX_TEXTURES) {
-                    constants.textureIndex = mesh.albedoTexture;
+                    obj.textureIndex = mesh.albedoTexture;
                 } else {
-                    constants.textureIndex = m_whiteTexture->getBindlessTextureIndex();
+                    obj.textureIndex = m_whiteTexture->getBindlessTextureIndex();
                 }
 
                 if (mesh.samplerIndex < VK_BindlessManager::MAX_SAMPLERS) {
-                    constants.samplerIndex = mesh.samplerIndex;
+                    obj.samplerIndex = mesh.samplerIndex;
                 } else {
-                    constants.samplerIndex = m_whiteTexture->getBindlessSamplerIndex();
+                    obj.samplerIndex = m_whiteTexture->getBindlessSamplerIndex();
                 }
 
-                constants.albedoFactor = mesh.albedoFactor;
-                constants.metallicFactor = mesh.metallicFactor;
-                constants.roughnessFactor = mesh.roughnessFactor;
-
-                constants.mvp = mvp;
+                obj.albedoFactor = mesh.albedoFactor;
+                obj.metallicFactor = mesh.metallicFactor;
+                obj.roughnessFactor = mesh.roughnessFactor;
+                obj.mvp = mvp;
+                obj.worldMatrix = transform.worldMatrix;
 
                 bool isSelected = ((uint32_t)entity == selectedId);
                 if (isSelected) {
-                    constants.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
+                    obj.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
                 } else {
-                    constants.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
+                    obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
                 }
 
-                commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
+                uint32_t entityIdx = (uint32_t)frameObjects.size();
+                frameObjects.push_back(obj);
 
-                commandBuffer.drawIndexed(mesh.indexCount, 1, mesh.indexOffset, mesh.vertexOffset, 0);
-                meshCount++;
+                DrawIndexedIndirectCommand cmd;
+                cmd.indexCount = mesh.indexCount;
+                cmd.instanceCount = 1;
+                cmd.firstIndex = mesh.indexOffset;
+                cmd.vertexOffset = mesh.vertexOffset;
+                cmd.firstInstance = entityIdx;
+
+                DrawBatch* targetBatch = nullptr;
+                for (auto& b : batches) {
+                    if (b.vb == currentVb && b.ib == currentIb) {
+                        targetBatch = &b;
+                        break;
+                    }
+                }
+                if (!targetBatch) {
+                    batches.push_back({currentVb, currentIb, {}});
+                    targetBatch = &batches.back();
+                }
+                targetBatch->commands.push_back(cmd);
+
                 totalTriangles += mesh.indexCount / 3;
+            }
+
+            uint32_t frameOffset = m_currentFrame * objCap;
+            if (!frameObjects.empty()) {
+                (void)m_objectDataBuffer->uploadData(frameObjects.data(), frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
+
+                std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
+                allIndirectCommands.reserve(frameObjects.size());
+                for (const auto& batch : batches) {
+                    allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
+                }
+                (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+
+                vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
+                commandBuffer.pushConstants<uint32_t>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, frameOffset);
+
+                uint32_t commandOffset = 0;
+                for (const auto& batch : batches) {
+                    vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vb)->getHandle() };
+                    vk::DeviceSize offsets[] = { 0 };
+                    commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+                    commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.ib)->getHandle(), 0, vk::IndexType::eUint32);
+
+                    commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
+
+                    commandOffset += (uint32_t)batch.commands.size();
+                    meshCount += batch.commands.size();
+                }
             }
 
             g_RenderStats_DrawCalls.store((uint32_t)meshCount, std::memory_order_relaxed);

@@ -34,10 +34,14 @@ Status RenderSystem::initialize() {
     NX_CORE_INFO("Initializing Core RenderSystem...");
     m_meshManager = std::make_unique<MeshManager>(m_context);
     NX_ASSERT(m_meshManager, "MeshManager creation failed");
+    NX_CORE_INFO("RenderSystem: initializing m_meshManager");
     NX_RETURN_IF_ERROR(m_meshManager->initialize());
     m_commandGenerator = std::make_unique<DrawCommandGenerator>(m_context);
     NX_ASSERT(m_commandGenerator, "DrawCommandGenerator creation failed");
+    NX_CORE_INFO("RenderSystem: initializing m_commandGenerator");
     NX_RETURN_IF_ERROR(m_commandGenerator->initialize(1024));
+
+    NX_CORE_INFO("RenderSystem: Setting up cube vertices");
 
     std::vector<float> vertices = {
         -0.5f, -0.5f,  0.5f,  0.0f, 1.0f,  0.0f,  0.0f,  1.0f,
@@ -81,17 +85,25 @@ Status RenderSystem::initialize() {
 
     NX_RETURN_IF_ERROR(m_meshManager->addMesh(vertices, indices, m_cubeVertexOffset, m_cubeIndexOffset));
 
+    NX_CORE_INFO("RenderSystem: calling setGlobalVertexBuffer");
     auto* vkContext = dynamic_cast<VK_Context*>(m_context);
     if (vkContext) {
         vkContext->setGlobalVertexBuffer(m_meshManager->getVertexBuffer());
         vkContext->setGlobalIndexBuffer(m_meshManager->getIndexBuffer());
     }
 
+    NX_CORE_INFO("RenderSystem: updating command generator");
     std::vector<DrawIndexedIndirectCommand> commands = { { 36, 1, m_cubeIndexOffset, static_cast<int32_t>(m_cubeVertexOffset), 0 } };
     NX_RETURN_IF_ERROR(m_commandGenerator->updateCommands(commands));
+
+    NX_CORE_INFO("RenderSystem: Creating VK_Renderer");
     m_bridgeRenderer = std::make_unique<VK_Renderer>(m_context, m_swapchain);
     NX_ASSERT(m_bridgeRenderer, "VK_Renderer creation failed");
+
+    NX_CORE_INFO("RenderSystem: Calling VK_Renderer::initialize");
     NX_RETURN_IF_ERROR(m_bridgeRenderer->initialize());
+
+    NX_CORE_INFO("RenderSystem: Initialized successfully");
     return OkStatus();
 }
 
