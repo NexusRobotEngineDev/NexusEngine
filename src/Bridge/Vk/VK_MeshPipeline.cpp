@@ -23,7 +23,7 @@ Status VK_MeshPipeline::initialize(vk::PipelineLayout layout, vk::ShaderModule t
 
     vk::PipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
 
     vk::PipelineMultisampleStateCreateInfo multisampling{};
     multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1;

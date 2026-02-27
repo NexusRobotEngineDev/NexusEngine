@@ -117,8 +117,8 @@ struct CameraComponent {
         return {
              f / aspect, 0.0f, 0.0f,                               0.0f,
              0.0f,       f,    0.0f,                               0.0f,
-             0.0f,       0.0f, farPlane / (nearPlane - farPlane), -1.0f,
-             0.0f,       0.0f, -(farPlane * nearPlane) / (farPlane - nearPlane), 0.0f
+             0.0f,       0.0f, nearPlane / (farPlane - nearPlane), -1.0f,
+             0.0f,       0.0f, (farPlane * nearPlane) / (farPlane - nearPlane), 0.0f
         };
     }
 

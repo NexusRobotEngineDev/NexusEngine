@@ -13,7 +13,7 @@
 
 namespace Nexus {
 
-extern std::mutex g_uiMutex;
+
 
 extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
 extern std::atomic<uint32_t> g_RenderStats_Triangles;
@@ -431,8 +431,6 @@ void EditorUIManager::update(Scene* scene) {
     initCachedElements();
 
 
-    std::lock_guard<std::mutex> lock(g_uiMutex);
-
     processUICommands();
 
     if (++m_updateThrottle < 2) {
@@ -452,9 +450,14 @@ void EditorUIManager::update(Scene* scene) {
         static uint32_t lastSelectedId = 0xFFFFFFFF;
         uint32_t currentSelectedId = m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
 
-        if (currentCount != lastCount) {
+        static auto lastRebuildTime = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        bool timeToRebuild = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRebuildTime).count() > 500;
+
+        if (timeToRebuild && currentCount != lastCount) {
             m_hierarchyDirty = true;
             lastCount = currentCount;
+            lastRebuildTime = now;
         }
 
         if (m_hierarchyDirty) {
@@ -554,14 +557,17 @@ void EditorUIManager::update(Scene* scene) {
     auto* lId = m_cache.entityId;
     auto* lName = m_cache.entityName;
 
+    auto setCachedRML = [](Rml::Element* el, const std::string& text, std::string& cache) {
+        if (el && cache != text) { el->SetInnerRML(text); cache = text; }
+    };
+    static std::string cache_lId, cache_lName, cache_rot, cache_scl, cache_wx, cache_wy, cache_wz, cache_pn;
+
     if (m_selectedEntity.isValid()) {
-        if (lId) lId->SetInnerRML(std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())));
-        if (lName && m_selectedEntity.hasComponent<TagComponent>()) {
-            lName->SetInnerRML(m_selectedEntity.getComponent<TagComponent>().name);
-        }
+        setCachedRML(lId, std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())), cache_lId);
+        if (m_selectedEntity.hasComponent<TagComponent>()) setCachedRML(lName, m_selectedEntity.getComponent<TagComponent>().name, cache_lName);
     } else {
-        if (lId) lId->SetInnerRML("-");
-        if (lName) lName->SetInnerRML("None");
+        setCachedRML(lId, "-", cache_lId);
+        setCachedRML(lName, "None", cache_lName);
 
         auto* px = m_cache.posX;
         auto* py = m_cache.posY;
@@ -570,18 +576,12 @@ void EditorUIManager::update(Scene* scene) {
         if (py && !py->IsClassSet("focused")) py->SetAttribute("value", "");
         if (pz && !pz->IsClassSet("focused")) pz->SetAttribute("value", "");
 
-        auto* rot = m_cache.rot;
-        auto* scl = m_cache.scale;
-        auto* wx = m_cache.worldX;
-        auto* wy = m_cache.worldY;
-        auto* wz = m_cache.worldZ;
-        auto* pn = m_cache.parentName;
-        if (rot) rot->SetInnerRML("-");
-        if (scl) scl->SetInnerRML("-");
-        if (wx) wx->SetInnerRML("-");
-        if (wy) wy->SetInnerRML("-");
-        if (wz) wz->SetInnerRML("-");
-        if (pn) pn->SetInnerRML("-");
+        setCachedRML(m_cache.rot, "-", cache_rot);
+        setCachedRML(m_cache.scale, "-", cache_scl);
+        setCachedRML(m_cache.worldX, "-", cache_wx);
+        setCachedRML(m_cache.worldY, "-", cache_wy);
+        setCachedRML(m_cache.worldZ, "-", cache_wz);
+        setCachedRML(m_cache.parentName, "-", cache_pn);
     }
 
     if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {
@@ -597,48 +597,40 @@ void EditorUIManager::update(Scene* scene) {
             snprintf(buf, sizeof(buf), "%.4f", transform.position[2]); pz->SetAttribute("value", std::string(buf));
         }
 
-        auto* rot = m_cache.rot;
-        if (rot) {
+        if (m_cache.rot) {
             char buf[96];
-            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)",
-                transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]);
-            rot->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)", transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]);
+            setCachedRML(m_cache.rot, buf, cache_rot);
         }
 
-        auto* scl = m_cache.scale;
-        if (scl) {
+        if (m_cache.scale) {
             char buf[64];
-            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)",
-                transform.scale[0], transform.scale[1], transform.scale[2]);
-            scl->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)", transform.scale[0], transform.scale[1], transform.scale[2]);
+            setCachedRML(m_cache.scale, buf, cache_scl);
         }
 
-        auto* wx = m_cache.worldX;
-        auto* wy = m_cache.worldY;
-        auto* wz = m_cache.worldZ;
-        if (wx && wy && wz) {
+        if (m_cache.worldX && m_cache.worldY && m_cache.worldZ) {
             char buf[32];
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); wx->SetInnerRML(buf);
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[13]); wy->SetInnerRML(buf);
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); wz->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); setCachedRML(m_cache.worldX, buf, cache_wx);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[13]); setCachedRML(m_cache.worldY, buf, cache_wy);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); setCachedRML(m_cache.worldZ, buf, cache_wz);
         }
 
-        auto* pn = m_cache.parentName;
-        if (pn) {
+        if (m_cache.parentName) {
             if (m_selectedEntity.hasComponent<HierarchyComponent>()) {
                 auto& hc = m_selectedEntity.getComponent<HierarchyComponent>();
                 if (hc.parent != entt::null && m_currentScene) {
                     Entity parentEnt(hc.parent, &m_currentScene->getRegistry());
                     if (parentEnt.hasComponent<TagComponent>()) {
-                        pn->SetInnerRML(parentEnt.getComponent<TagComponent>().name);
+                        setCachedRML(m_cache.parentName, parentEnt.getComponent<TagComponent>().name, cache_pn);
                     } else {
-                        pn->SetInnerRML("(id: " + std::to_string((uint32_t)hc.parent) + ")");
+                        setCachedRML(m_cache.parentName, "(id: " + std::to_string((uint32_t)hc.parent) + ")", cache_pn);
                     }
                 } else {
-                    pn->SetInnerRML("(root)");
+                    setCachedRML(m_cache.parentName, "(root)", cache_pn);
                 }
             } else {
-                pn->SetInnerRML("(none)");
+                setCachedRML(m_cache.parentName, "(none)", cache_pn);
             }
         }
     }

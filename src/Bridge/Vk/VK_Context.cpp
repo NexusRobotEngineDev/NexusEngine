@@ -370,8 +370,16 @@ void VK_Context::endSingleTimeCommands(vk::CommandBuffer commandBuffer) {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    (void)m_graphicsQueue.submit(submitInfo, nullptr);
-    (void)m_graphicsQueue.waitIdle();
+    vk::Fence fence = m_device.createFence(vk::FenceCreateInfo()).value;
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        vk::Result submitResult = m_graphicsQueue.submit(submitInfo, fence);
+        if (submitResult != vk::Result::eSuccess) {
+            NX_CORE_ERROR("QueueSubmit in endSingleTimeCommands failed with result: {}", vk::to_string(submitResult));
+        }
+    }
+    (void)m_device.waitForFences(1, &fence, VK_TRUE, UINT64_MAX);
+    m_device.destroyFence(fence);
 
     m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
 }

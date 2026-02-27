@@ -44,6 +44,7 @@ public:
     vk::Device getDevice() const { return m_device; }
     vk::PhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     vk::Queue getGraphicsQueue() const { return m_graphicsQueue; }
+    std::mutex& getQueueMutex() { return m_queueMutex; }
     vk::Instance getInstance() const { return m_instance; }
     vk::SurfaceKHR getSurface() const { return m_surface; }
     vk::CommandPool getCommandPool() const { return m_commandPool; }
@@ -94,6 +95,7 @@ private:
     vk::PhysicalDevice m_physicalDevice;
     vk::Device m_device;
     vk::Queue m_graphicsQueue;
+    std::mutex m_queueMutex;
     uint32_t m_graphicsQueueFamilyIndex = 0;
     vk::CommandPool m_commandPool;
     std::unique_ptr<VK_BindlessManager> m_bindlessManager;

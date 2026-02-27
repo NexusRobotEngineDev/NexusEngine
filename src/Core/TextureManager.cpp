@@ -26,6 +26,7 @@ TextureManager::TextureManager(IContext* context) : m_context(context) {
 
 TextureManager::~TextureManager() {
     m_textures.clear();
+    m_gcQueue.clear();
     m_defaultTexture.reset();
     m_whiteTexture.reset();
 }
@@ -96,7 +97,22 @@ void TextureManager::addTexture(const std::string& key, std::unique_ptr<ITexture
 
 void TextureManager::removeTexture(const std::string& key) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_textures.erase(key);
+    auto it = m_textures.find(key);
+    if (it != m_textures.end()) {
+        m_gcQueue.push_back({std::move(it->second), 3});
+        m_textures.erase(it);
+    }
+}
+
+void TextureManager::performGarbageCollection() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto it = m_gcQueue.begin(); it != m_gcQueue.end();) {
+        if (--it->framesRemaining <= 0) {
+            it = m_gcQueue.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 ITexture* TextureManager::getDefaultTexture() {

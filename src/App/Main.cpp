@@ -128,9 +128,11 @@ void OnWindowEvent(const void* event) {
 }
 
 void ProcessEventSync(const SDL_Event& sdlEvent) {
-    if (g_renderer) {
-        g_renderer->processEvent(&sdlEvent);
+#ifdef ENABLE_RMLUI
+    if (g_renderer && g_renderer->getBridgeRenderer()->getUIBridge()) {
+        g_renderer->getBridgeRenderer()->getUIBridge()->processSdlEvent(sdlEvent);
     }
+#endif
 
     switch (sdlEvent.type) {
         case SDL_EVENT_KEY_DOWN:
@@ -712,8 +714,15 @@ void RunMainLoop() {
             }
 
             auto t5 = std::chrono::high_resolution_clock::now();
-            if (g_editorUIManager) {
-                g_editorUIManager->update(g_scene.get());
+            auto* uiBridge = (g_renderer) ? g_renderer->getBridgeRenderer()->getUIBridge() : nullptr;
+            if (uiBridge) {
+                if (uiBridge->tryLockUI()) {
+                    if (g_editorUIManager) {
+                        g_editorUIManager->update(g_scene.get());
+                    }
+                    uiBridge->updateUI();
+                    uiBridge->unlockUI();
+                }
             }
             auto prepEndTime = std::chrono::high_resolution_clock::now();
             lu += std::chrono::duration<float, std::milli>(prepEndTime - t5).count();
@@ -723,6 +732,11 @@ void RunMainLoop() {
                 NX_CORE_INFO("Logic Profile: Hier={:.2f}ms, Cesium={:.2f}ms, Phys={:.2f}ms, UIMgr={:.2f}ms", lh/60.0f, lc/60.0f, lpu/60.0f, lu/60.0f);
                 lh = 0; lc = 0; lpu = 0; lu = 0; p_prep = 0;
             }
+
+            if (g_textureManager) {
+                g_textureManager->performGarbageCollection();
+            }
+
             accumPrepTime += std::chrono::duration<double, std::milli>(prepEndTime - prepStartTime).count();
 
             static RenderSnapshot sm_snapshots[4];

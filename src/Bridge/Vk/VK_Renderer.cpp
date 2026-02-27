@@ -196,14 +196,14 @@ Status VK_Renderer::createGraphicsPipeline() {
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
     depthStencilState.depthTestEnable = VK_TRUE;
     depthStencilState.depthWriteEnable = VK_TRUE;
-    depthStencilState.depthCompareOp = vk::CompareOp::eLess;
+    depthStencilState.depthCompareOp = vk::CompareOp::eGreaterOrEqual;
     depthStencilState.depthBoundsTestEnable = VK_FALSE;
     depthStencilState.stencilTestEnable = VK_FALSE;
     depthStencilState.minDepthBounds = 0.0f;
@@ -354,8 +354,6 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
         return;
     }
 
-    commandBuffer.begin(&beginInfo);
-
     vk::Extent2D extent = m_swapchain->getExtent();
 
     vk::ImageMemoryBarrier colorBarrier;
@@ -395,7 +393,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
     depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
     depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(0.0f, 0);
 
     vk::RenderingInfo renderingInfo;
     renderingInfo.renderArea = vk::Rect2D({0, 0}, extent);
@@ -472,7 +470,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     auto t_ui0 = std::chrono::high_resolution_clock::now();
 #ifdef ENABLE_RMLUI
     if (m_uiBridge) {
-        m_uiBridge->updateAndRender();
+        m_uiBridge->renderUI();
     }
 #endif
     commandBuffer.endRendering();
@@ -523,14 +521,6 @@ void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
 Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
-#ifdef ENABLE_RMLUI
-    if (m_uiBridge && m_swapchain->getExtent().width > 0 && m_swapchain->getExtent().height > 0) {
-        SDL_Event evt;
-        while (m_eventQueue.pop(evt)) {
-            m_uiBridge->processSdlEvent(evt);
-        }
-    }
-#endif
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
@@ -540,11 +530,7 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
 
 
 void VK_Renderer::processEvent(const void* event) {
-#ifdef ENABLE_RMLUI
-    if (event) {
-        m_eventQueue.push(*static_cast<const SDL_Event*>(event));
-    }
-#endif
+    (void)event;
 }
 
 Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
@@ -583,9 +569,6 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::Semaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    (void)m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
-    auto t1 = std::chrono::high_resolution_clock::now();
 
     vk::PresentInfoKHR presentInfo;
     presentInfo.waitSemaphoreCount = 1;
@@ -594,17 +577,29 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
-    auto t2 = std::chrono::high_resolution_clock::now();
-    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
-    auto t3 = std::chrono::high_resolution_clock::now();
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(m_context->getQueueMutex());
+        vk::Result submitResult = m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
+        if (submitResult != vk::Result::eSuccess) {
+            NX_CORE_ERROR("QueueSubmit in endFrame failed with result: {}", vk::to_string(submitResult));
+        }
+        vk::Result presentResult = m_context->getGraphicsQueue().presentKHR(&presentInfo);
+        if (presentResult != vk::Result::eSuccess && presentResult != vk::Result::eSuboptimalKHR) {
+            NX_CORE_ERROR("QueuePresent in endFrame failed with result: {}", vk::to_string(presentResult));
+        } else if (presentResult == vk::Result::eSuboptimalKHR) {
+            NX_CORE_WARN("QueuePresent in endFrame returned eSuboptimalKHR");
+        }
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
 
     static int p_frame = 0;
-    static float s_queue = 0, s_pres = 0;
-    s_queue += std::chrono::duration<float, std::milli>(t1 - t0).count();
-    s_pres += std::chrono::duration<float, std::milli>(t3 - t2).count();
+    static float s_total = 0;
+    s_total += std::chrono::duration<float, std::milli>(t1 - t0).count();
     if (++p_frame >= 60) {
-        NX_CORE_INFO("GPU Wait Profile: QueueSubmit={:.2f}ms, PresentKHR={:.2f}ms", s_queue/60.0f, s_pres/60.0f);
-        p_frame = 0; s_queue = 0; s_pres = 0;
+        NX_CORE_INFO("GPU Wait Profile: Submit+Present={:.2f}ms", s_total/60.0f);
+        p_frame = 0; s_total = 0;
     }
 
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -623,7 +618,12 @@ void VK_Renderer::present(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
-    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    vk::Result presentResult = m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    if (presentResult != vk::Result::eSuccess && presentResult != vk::Result::eSuboptimalKHR) {
+        NX_CORE_ERROR("QueuePresent in present() failed with result: {}", vk::to_string(presentResult));
+    } else if (presentResult == vk::Result::eSuboptimalKHR) {
+        NX_CORE_WARN("QueuePresent in present() returned eSuboptimalKHR");
+    }
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 void VK_Renderer::deviceWaitIdle() { (void)m_device.waitIdle(); }

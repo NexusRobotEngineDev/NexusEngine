@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <memory>
 #include <mutex>
+#include <vector>
+#include <deque>
 
 namespace Nexus {
 namespace Core {
@@ -39,10 +41,15 @@ public:
     void addTexture(const std::string& key, std::unique_ptr<ITexture> texture);
 
     /**
-     * @brief 移除特定的纹理缓存（用于流式瓦片销毁）
+     * @brief 移除特定的纹理缓存（进入延迟释放队列）
      * @param key 缓存键
      */
     void removeTexture(const std::string& key);
+
+    /**
+     * @brief 垃圾回收，销毁不再使用的纹理
+     */
+    void performGarbageCollection();
 
     /**
      * @brief 获取默认纹理（fallback）
@@ -58,6 +65,13 @@ private:
     IContext* m_context;
     std::mutex m_mutex;
     std::unordered_map<std::string, std::unique_ptr<ITexture>> m_textures;
+
+    struct GcEntry {
+        std::unique_ptr<ITexture> texture;
+        int framesRemaining;
+    };
+    std::vector<GcEntry> m_gcQueue;
+
     std::unique_ptr<ITexture> m_defaultTexture;
     std::unique_ptr<ITexture> m_whiteTexture;
 };
