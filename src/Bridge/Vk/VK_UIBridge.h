@@ -32,15 +32,7 @@ public:
      */
     void shutdown();
 
-    /**
-     * @brief 更新 UI 逻辑
-     */
-    void update();
-
-    /**
-     * @brief 渲染 UI 几何体
-     */
-    void render();
+    void updateAndRender();
 
     /**
      * @brief 加载 UI 文档

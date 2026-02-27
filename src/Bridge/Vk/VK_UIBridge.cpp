@@ -1,11 +1,13 @@
 #include "VK_UIBridge.h"
 #include "../Log.h"
 #include "../ResourceLoader.h"
-#include <RmlUi/Debugger.h>
 
 #ifdef ENABLE_RMLUI
+#include <RmlUi/Debugger.h>
 
 namespace Nexus {
+
+std::mutex g_uiMutex;
 
 VK_UIBridge::VK_UIBridge(IContext* context, IRenderer* renderer)
     : m_context(context), m_renderer(renderer) {
@@ -40,9 +42,6 @@ bool VK_UIBridge::initialize(int windowWidth, int windowHeight) {
         return false;
     }
 
-    Rml::Debugger::Initialise(m_rmlContext);
-    Rml::Debugger::SetVisible(true);
-
     NX_CORE_INFO("RmlUi Bridge Initialized.");
     return true;
 }
@@ -61,18 +60,33 @@ void VK_UIBridge::shutdown() {
 
 
 
-void VK_UIBridge::update() {
+extern std::atomic<float> g_RenderStats_UITime;
+
+void VK_UIBridge::updateAndRender() {
+    auto tStart = std::chrono::high_resolution_clock::now();
+    std::lock_guard<std::mutex> lock(g_uiMutex);
     if (m_rmlContext) {
         m_rmlContext->Update();
     }
     if (m_renderInterface) {
         m_renderInterface->pumpDeferredDestruction();
     }
-}
-
-void VK_UIBridge::render() {
     if (m_rmlContext) {
+        if (m_renderInterface) {
+            m_renderInterface->beginRender();
+        }
         m_rmlContext->Render();
+    }
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(tEnd - tStart).count();
+
+    static float accum = 0;
+    static int frames = 0;
+    accum += elapsed;
+    if (++frames >= 60) {
+        g_RenderStats_UITime.store(accum / frames, std::memory_order_relaxed);
+        accum = 0;
+        frames = 0;
     }
 }
 
@@ -117,6 +131,7 @@ static Rml::Input::KeyIdentifier translateKey(SDL_Scancode scancode) {
 }
 
 void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
+    std::lock_guard<std::mutex> lock(g_uiMutex);
     if (!m_rmlContext) return;
 
     int keyModifier = 0;

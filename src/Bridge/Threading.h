@@ -5,6 +5,7 @@
 #include "Vk/VK_Renderer.h"
 #include "thirdparty.h"
 #include "Log.h"
+#include "RenderProxy.h"
 #include <memory>
 
 namespace Nexus {
@@ -31,7 +32,7 @@ struct RenderCommand {
     RenderCommandType type = RenderCommandType::None;
     uint32_t width = 0;
     uint32_t height = 0;
-    Registry* registry = nullptr;
+    RenderSnapshot* snapshot = nullptr;
 };
 
 /**
@@ -47,6 +48,10 @@ public:
         while (!m_queue.push(cmd)) {
             std::this_thread::yield();
         }
+    }
+
+    size_t getQueueSize() const {
+        return m_queue.size();
     }
 
     void requestSync() {
@@ -86,7 +91,7 @@ private:
             switch (cmd.type) {
                 case RenderCommandType::Draw: {
                     auto rtStart = std::chrono::high_resolution_clock::now();
-                    if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
+                    if (m_renderer) (void)m_renderer->renderFrame(cmd.snapshot);
                     auto rtEnd = std::chrono::high_resolution_clock::now();
                     double duration = std::chrono::duration<double, std::milli>(rtEnd - rtStart).count();
 
@@ -229,6 +234,7 @@ private:
             handleCommand(cmd);
         }
     }
+
 
     void handleCommand(WindowCommand& cmd) {
         if (cmd.type == WindowCommandType::Create) {

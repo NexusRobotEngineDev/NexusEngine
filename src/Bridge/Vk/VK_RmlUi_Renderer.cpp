@@ -146,6 +146,10 @@ Rml::CompiledGeometryHandle VK_RmlUi_Renderer::CompileGeometry(Rml::Span<const R
     return reinterpret_cast<Rml::CompiledGeometryHandle>(geometry);
 }
 
+void VK_RmlUi_Renderer::beginRender() {
+    m_pipelineBound = false;
+}
+
 void VK_RmlUi_Renderer::RenderGeometry(Rml::CompiledGeometryHandle geometry_handle, Rml::Vector2f translation, Rml::TextureHandle texture) {
     if (!geometry_handle) return;
 
@@ -155,8 +159,17 @@ void VK_RmlUi_Renderer::RenderGeometry(Rml::CompiledGeometryHandle geometry_hand
 
     auto vkCmd = static_cast<VK_CommandBuffer*>(cmd)->getHandle();
 
-    vk::Viewport viewport(0.0f, 0.0f, (float)m_windowWidth, (float)m_windowHeight, 0.0f, 1.0f);
-    vkCmd.setViewport(0, 1, &viewport);
+    if (!m_pipelineBound && m_pipeline) {
+        vkCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_pipeline);
+
+        vk::DescriptorSet bindlessSet = static_cast<VK_Context*>(m_context)->getBindlessManager()->getSet();
+        vkCmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &bindlessSet, 0, nullptr);
+
+        vk::Viewport viewport(0.0f, 0.0f, (float)m_windowWidth, (float)m_windowHeight, 0.0f, 1.0f);
+        vkCmd.setViewport(0, 1, &viewport);
+
+        m_pipelineBound = true;
+    }
 
     vk::Rect2D scissor({0, 0}, { static_cast<uint32_t>(m_windowWidth), static_cast<uint32_t>(m_windowHeight) });
     if(m_scissorEnabled) {
@@ -168,11 +181,6 @@ void VK_RmlUi_Renderer::RenderGeometry(Rml::CompiledGeometryHandle geometry_hand
     vkCmd.setScissor(0, 1, &scissor);
 
     if (m_pipeline) {
-        vkCmd.bindPipeline(vk::PipelineBindPoint::eGraphics, m_pipeline);
-
-        vk::DescriptorSet bindlessSet = static_cast<VK_Context*>(m_context)->getBindlessManager()->getSet();
-        vkCmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &bindlessSet, 0, nullptr);
-
         struct PushConstants {
             float translation[2];
             float windowSize[2];

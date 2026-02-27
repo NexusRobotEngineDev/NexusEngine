@@ -31,7 +31,7 @@ public:
     /**
      * @brief 渲染一帧
      */
-    Status renderFrame(Registry* registry = nullptr) override;
+    Status renderFrame(RenderSnapshot* snapshot = nullptr) override;
 
     /**
      * @brief 处理系统事件

@@ -96,6 +96,33 @@ private:
     double m_lastUpdateTime = 0.0;
     std::set<uint32_t> m_expandedEntities;
     bool m_hierarchyDirty = true;
+    int m_updateThrottle = 0;
+
+    struct CachedElements {
+        Rml::Element* hierarchyTree = nullptr;
+        Rml::Element* entityId = nullptr;
+        Rml::Element* entityName = nullptr;
+        Rml::Element* posX = nullptr;
+        Rml::Element* posY = nullptr;
+        Rml::Element* posZ = nullptr;
+        Rml::Element* rot = nullptr;
+        Rml::Element* scale = nullptr;
+        Rml::Element* worldX = nullptr;
+        Rml::Element* worldY = nullptr;
+        Rml::Element* worldZ = nullptr;
+        Rml::Element* parentName = nullptr;
+        Rml::Element* drawCalls = nullptr;
+        Rml::Element* triangles = nullptr;
+        Rml::Element* fps = nullptr;
+        Rml::Element* frameTime = nullptr;
+        Rml::Element* uiTime = nullptr;
+        Rml::Element* logicTime = nullptr;
+        Rml::Element* renderSyncTime = nullptr;
+        Rml::Element* renderPrepTime = nullptr;
+        Rml::Element* renderDrawTime = nullptr;
+        bool initialized = false;
+    } m_cache;
+    void initCachedElements();
 
     UICommandQueue<UICommand, 128> m_uiCommandQueue;
 };

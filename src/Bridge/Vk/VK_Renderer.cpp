@@ -347,22 +347,16 @@ Status VK_Renderer::createSyncObjects() {
     return OkStatus();
 }
 
-void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, Registry* registry) {
+void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot) {
     vk::CommandBufferBeginInfo beginInfo;
 
     if (commandBuffer.begin(&beginInfo) != vk::Result::eSuccess) {
         return;
     }
 
-    vk::Extent2D extent = m_swapchain->getExtent();
+    commandBuffer.begin(&beginInfo);
 
-    if (!registry) {
-        static bool registryWarned = false;
-        if (!registryWarned) {
-            NX_CORE_ERROR("Renderer: registry is NULL, skipping mesh rendering!");
-            registryWarned = true;
-        }
-    }
+    vk::Extent2D extent = m_swapchain->getExtent();
 
     vk::ImageMemoryBarrier colorBarrier;
     colorBarrier.srcAccessMask = {};
@@ -431,203 +425,67 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     scissor.extent = extent;
     commandBuffer.setScissor(0, 1, &scissor);
 
-    if (registry) {
-        std::array<float, 16> viewProj = {
-            1,0,0,0,
-            0,1,0,0,
-            0,0,1,0,
-            0,0,0,1
-        };
+    auto t_draw0 = std::chrono::high_resolution_clock::now();
 
-        auto cameraView = registry->view<CameraComponent, TransformComponent>();
-        for (auto entity : cameraView) {
-            auto& camera = cameraView.get<CameraComponent>(entity);
-            auto& transform = cameraView.get<TransformComponent>(entity);
-
-            camera.aspect = (float)extent.width / (float)extent.height;
-
-            auto proj = camera.computeProjectionMatrix();
-
-            float pos[3] = { transform.position[0], transform.position[1], transform.position[2] };
-            float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
-            float upVector[3] = { camera.up[0], camera.up[1], camera.up[2] };
-
-            float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
-            float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
-            if (fLen > 1e-5f) { fwd[0]/=fLen; fwd[1]/=fLen; fwd[2]/=fLen; }
-            else { fwd[0]=0; fwd[1]=0; fwd[2]=-1; }
-
-            float right[3] = {
-                fwd[1]*upVector[2] - fwd[2]*upVector[1],
-                fwd[2]*upVector[0] - fwd[0]*upVector[2],
-                fwd[0]*upVector[1] - fwd[1]*upVector[0]
-            };
-            float rLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
-            if (rLen > 1e-5f) { right[0]/=rLen; right[1]/=rLen; right[2]/=rLen; }
-            else { right[0]=1; right[1]=0; right[2]=0; }
-
-            float up[3] = {
-                right[1]*fwd[2] - right[2]*fwd[1],
-                right[2]*fwd[0] - right[0]*fwd[2],
-                right[0]*fwd[1] - right[1]*fwd[0]
-            };
-
-            std::array<float, 16> view = {
-                right[0], up[0], -fwd[0], 0.0f,
-                right[1], up[1], -fwd[1], 0.0f,
-                right[2], up[2], -fwd[2], 0.0f,
-                -(right[0]*pos[0] + right[1]*pos[1] + right[2]*pos[2]),
-                -(up[0]*pos[0] + up[1]*pos[1] + up[2]*pos[2]),
-                fwd[0]*pos[0] + fwd[1]*pos[1] + fwd[2]*pos[2],
-                1.0f
-            };
-
-            viewProj = multiplyMat4(proj, view);
-
-            static int camLogCounter = 0;
-            if (camLogCounter++ % 600 == 0) {
-                NX_CORE_INFO("Camera Debug:");
-                NX_CORE_INFO("  Pos: ({}, {}, {})", transform.position[0], transform.position[1], transform.position[2]);
-                NX_CORE_INFO("  View[12..14]: {}, {}, {}", view[12], view[13], view[14]);
-                NX_CORE_INFO("  Proj[10..11]: {}, {}", proj[10], proj[11]);
-                NX_CORE_INFO("  Proj[14..15]: {}, {}", proj[14], proj[15]);
-            }
-            break;
-        }
-
-        auto meshView = registry->view<MeshComponent, TransformComponent>();
-
-        IBuffer* globalVb = m_context->getGlobalVertexBuffer();
-        IBuffer* globalIb = m_context->getGlobalIndexBuffer();
-
+    if (snapshot) {
         static int logCounter = 0;
         bool shouldLog = (logCounter++ % 600 == 0);
 
-            size_t meshCount = 0;
-            uint32_t totalTriangles = 0;
-            size_t objCap = 100000;
-            std::vector<ObjectData> frameObjects;
-            frameObjects.reserve(10000);
+        size_t objCap = 100000;
+        uint32_t frameOffset = m_currentFrame * objCap;
 
-            struct DrawBatch {
-                IBuffer* vb;
-                IBuffer* ib;
-                std::vector<DrawIndexedIndirectCommand> commands;
-            };
-            std::vector<DrawBatch> batches;
+        if (!snapshot->frameObjects.empty()) {
+            (void)m_objectDataBuffer->uploadData(snapshot->frameObjects.data(), snapshot->frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
 
-            uint32_t selectedId = m_selectedEntityId.load(std::memory_order_relaxed);
-
-            for (auto entity : meshView) {
-                auto& mesh = meshView.get<MeshComponent>(entity);
-                auto& transform = meshView.get<TransformComponent>(entity);
-
-                if (transform.worldMatrix[0] == 0.0f && transform.worldMatrix[5] == 0.0f && transform.worldMatrix[10] == 0.0f) {
-                    continue;
-                }
-
-                std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
-
-                IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
-                IBuffer* currentIb = mesh.indexBuffer ? mesh.indexBuffer : globalIb;
-                if (!currentVb || !currentIb) continue;
-
-                ObjectData obj = {};
-                if (mesh.albedoTexture < VK_BindlessManager::MAX_TEXTURES) {
-                    obj.textureIndex = mesh.albedoTexture;
-                } else {
-                    obj.textureIndex = m_whiteTexture->getBindlessTextureIndex();
-                }
-
-                if (mesh.samplerIndex < VK_BindlessManager::MAX_SAMPLERS) {
-                    obj.samplerIndex = mesh.samplerIndex;
-                } else {
-                    obj.samplerIndex = m_whiteTexture->getBindlessSamplerIndex();
-                }
-
-                obj.albedoFactor = mesh.albedoFactor;
-                obj.metallicFactor = mesh.metallicFactor;
-                obj.roughnessFactor = mesh.roughnessFactor;
-                obj.mvp = mvp;
-                obj.worldMatrix = transform.worldMatrix;
-
-                bool isSelected = ((uint32_t)entity == selectedId);
-                if (isSelected) {
-                    obj.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
-                } else {
-                    obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
-                }
-
-                uint32_t entityIdx = (uint32_t)frameObjects.size();
-                frameObjects.push_back(obj);
-
-                DrawIndexedIndirectCommand cmd;
-                cmd.indexCount = mesh.indexCount;
-                cmd.instanceCount = 1;
-                cmd.firstIndex = mesh.indexOffset;
-                cmd.vertexOffset = mesh.vertexOffset;
-                cmd.firstInstance = entityIdx;
-
-                DrawBatch* targetBatch = nullptr;
-                for (auto& b : batches) {
-                    if (b.vb == currentVb && b.ib == currentIb) {
-                        targetBatch = &b;
-                        break;
-                    }
-                }
-                if (!targetBatch) {
-                    batches.push_back({currentVb, currentIb, {}});
-                    targetBatch = &batches.back();
-                }
-                targetBatch->commands.push_back(cmd);
-
-                totalTriangles += mesh.indexCount / 3;
+            std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
+            allIndirectCommands.reserve(snapshot->frameObjects.size());
+            for (const auto& batch : snapshot->batches) {
+                allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
             }
+            (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
 
-            uint32_t frameOffset = m_currentFrame * objCap;
-            if (!frameObjects.empty()) {
-                (void)m_objectDataBuffer->uploadData(frameObjects.data(), frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
+            vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
+            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
+            commandBuffer.pushConstants<uint32_t>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, frameOffset);
 
-                std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
-                allIndirectCommands.reserve(frameObjects.size());
-                for (const auto& batch : batches) {
-                    allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
-                }
-                (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+            uint32_t commandOffset = 0;
+            for (const auto& batch : snapshot->batches) {
+                vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vertexBuffer)->getHandle() };
+                vk::DeviceSize offsets[] = { 0 };
+                commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+                commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.indexBuffer)->getHandle(), 0, vk::IndexType::eUint32);
 
-                vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
-                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
-                commandBuffer.pushConstants<uint32_t>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, frameOffset);
+                commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
 
-                uint32_t commandOffset = 0;
-                for (const auto& batch : batches) {
-                    vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vb)->getHandle() };
-                    vk::DeviceSize offsets[] = { 0 };
-                    commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-                    commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.ib)->getHandle(), 0, vk::IndexType::eUint32);
-
-                    commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
-
-                    commandOffset += (uint32_t)batch.commands.size();
-                    meshCount += batch.commands.size();
-                }
+                commandOffset += (uint32_t)batch.commands.size();
             }
+        }
 
-            g_RenderStats_DrawCalls.store((uint32_t)meshCount, std::memory_order_relaxed);
-            g_RenderStats_Triangles.store(totalTriangles, std::memory_order_relaxed);
+        g_RenderStats_DrawCalls.store(snapshot->meshCount, std::memory_order_relaxed);
+        g_RenderStats_Triangles.store(snapshot->totalTriangles, std::memory_order_relaxed);
 
-            if (shouldLog) {
-                NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", meshCount, totalTriangles);
-            }
+        if (shouldLog) {
+            NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", snapshot->meshCount, snapshot->totalTriangles);
+        }
     }
 
+    auto t_ui0 = std::chrono::high_resolution_clock::now();
 #ifdef ENABLE_RMLUI
     if (m_uiBridge) {
-        m_uiBridge->render();
+        m_uiBridge->updateAndRender();
     }
 #endif
-
     commandBuffer.endRendering();
+    auto t_ui1 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame3 = 0;
+    static float s_ui = 0, s_draw = 0;
+    s_draw += std::chrono::duration<float, std::milli>(t_ui0 - t_draw0).count();
+    s_ui += std::chrono::duration<float, std::milli>(t_ui1 - t_ui0).count();
+    if (++p_frame3 >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: CMD_Draw={:.2f}ms, UI={:.2f}ms", s_draw/60.0f, s_ui/60.0f);
+        p_frame3 = 0; s_ui = 0; s_draw = 0;
+    }
 
     colorBarrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
     colorBarrier.dstAccessMask = {};
@@ -635,7 +493,6 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     colorBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
 
     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
-
     (void)commandBuffer.end();
 }
 
@@ -665,19 +522,18 @@ Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
 void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
-Status VK_Renderer::renderFrame(Registry* registry) {
+Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
 #ifdef ENABLE_RMLUI
     if (m_uiBridge && m_swapchain->getExtent().width > 0 && m_swapchain->getExtent().height > 0) {
         SDL_Event evt;
         while (m_eventQueue.pop(evt)) {
             m_uiBridge->processSdlEvent(evt);
         }
-        m_uiBridge->update();
     }
 #endif
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
-    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, registry);
+    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
     endFrame(imageIndex);
     return OkStatus();
 }
@@ -692,10 +548,23 @@ void VK_Renderer::processEvent(const void* event) {
 }
 
 Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
+    auto t0 = std::chrono::high_resolution_clock::now();
     if (m_device.waitForFences(1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
         return InternalError("Wait for fences failed");
     }
+    auto t1 = std::chrono::high_resolution_clock::now();
     vk::Result acquireResult = m_device.acquireNextImageKHR(m_swapchain->getHandle(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], vk::Fence(), &imageIndex);
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame2 = 0;
+    static float s_fence = 0, s_acq = 0;
+    s_fence += std::chrono::duration<float, std::milli>(t1 - t0).count();
+    s_acq += std::chrono::duration<float, std::milli>(t2 - t1).count();
+    if (++p_frame2 >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: waitForFences={:.2f}ms, acquireNextImage={:.2f}ms", s_fence/60.0f, s_acq/60.0f);
+        p_frame2 = 0; s_fence = 0; s_acq = 0;
+    }
+
     if (acquireResult == vk::Result::eErrorOutOfDateKHR) return Status(absl::StatusCode::kUnavailable, "Swapchain out of date");
     if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) return InternalError("Failed to acquire swap chain image");
     if (m_device.resetFences(1, &m_inFlightFences[m_currentFrame]) != vk::Result::eSuccess) return InternalError("Failed to reset fences");
@@ -714,7 +583,10 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::Semaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
+    auto t0 = std::chrono::high_resolution_clock::now();
     (void)m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
+    auto t1 = std::chrono::high_resolution_clock::now();
+
     vk::PresentInfoKHR presentInfo;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
@@ -722,7 +594,19 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
+    auto t2 = std::chrono::high_resolution_clock::now();
     (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    auto t3 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame = 0;
+    static float s_queue = 0, s_pres = 0;
+    s_queue += std::chrono::duration<float, std::milli>(t1 - t0).count();
+    s_pres += std::chrono::duration<float, std::milli>(t3 - t2).count();
+    if (++p_frame >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: QueueSubmit={:.2f}ms, PresentKHR={:.2f}ms", s_queue/60.0f, s_pres/60.0f);
+        p_frame = 0; s_queue = 0; s_pres = 0;
+    }
+
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 uint32_t VK_Renderer::acquireNextImage() {

@@ -7,15 +7,19 @@
 #include "../Bridge/Entity.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <mutex>
 
 #ifdef ENABLE_RMLUI
 
 namespace Nexus {
 
+extern std::mutex g_uiMutex;
+
 extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
 extern std::atomic<uint32_t> g_RenderStats_Triangles;
 extern std::atomic<float> g_RenderStats_FPS;
 extern std::atomic<float> g_RenderStats_FrameTime;
+extern std::atomic<float> g_RenderStats_UITime;
 extern std::atomic<float> g_RenderStats_LogicTime;
 extern std::atomic<float> g_RenderStats_RenderSyncTime;
 extern std::atomic<float> g_RenderStats_RenderPrepTime;
@@ -388,6 +392,32 @@ void EditorUIManager::processUICommands() {
     }
 }
 
+void EditorUIManager::initCachedElements() {
+    if (m_cache.initialized || !m_editorDoc) return;
+    m_cache.hierarchyTree = m_editorDoc->GetElementById("hierarchy-tree");
+    m_cache.entityId = m_editorDoc->GetElementById("prop-entity-id");
+    m_cache.entityName = m_editorDoc->GetElementById("prop-entity-name");
+    m_cache.posX = m_editorDoc->GetElementById("prop-pos-x");
+    m_cache.posY = m_editorDoc->GetElementById("prop-pos-y");
+    m_cache.posZ = m_editorDoc->GetElementById("prop-pos-z");
+    m_cache.rot = m_editorDoc->GetElementById("prop-rot");
+    m_cache.scale = m_editorDoc->GetElementById("prop-scale");
+    m_cache.worldX = m_editorDoc->GetElementById("prop-world-x");
+    m_cache.worldY = m_editorDoc->GetElementById("prop-world-y");
+    m_cache.worldZ = m_editorDoc->GetElementById("prop-world-z");
+    m_cache.parentName = m_editorDoc->GetElementById("prop-parent-name");
+    m_cache.drawCalls = m_editorDoc->GetElementById("prop-draw-calls");
+    m_cache.triangles = m_editorDoc->GetElementById("prop-triangles");
+    m_cache.fps = m_editorDoc->GetElementById("prop-fps");
+    m_cache.frameTime = m_editorDoc->GetElementById("prop-frame-time");
+    m_cache.uiTime = m_editorDoc->GetElementById("prop-ui-time");
+    m_cache.logicTime = m_editorDoc->GetElementById("prop-logic-time");
+    m_cache.renderSyncTime = m_editorDoc->GetElementById("prop-render-sync-time");
+    m_cache.renderPrepTime = m_editorDoc->GetElementById("prop-render-prep-time");
+    m_cache.renderDrawTime = m_editorDoc->GetElementById("prop-render-draw-time");
+    m_cache.initialized = true;
+}
+
 void EditorUIManager::update(Scene* scene) {
     if (!scene) {
         NX_CORE_WARN("EditorUIManager::update called with null scene!");
@@ -398,9 +428,19 @@ void EditorUIManager::update(Scene* scene) {
         return;
     }
     m_currentScene = scene;
+    initCachedElements();
+
+
+    std::lock_guard<std::mutex> lock(g_uiMutex);
+
     processUICommands();
 
-    Rml::Element* treeParent = m_editorDoc->GetElementById("hierarchy-tree");
+    if (++m_updateThrottle < 2) {
+        return;
+    }
+    m_updateThrottle = 0;
+
+    Rml::Element* treeParent = m_cache.hierarchyTree;
     if (treeParent) {
         auto& registry = scene->getRegistry();
         auto view = registry.view<TagComponent>();
@@ -511,8 +551,8 @@ void EditorUIManager::update(Scene* scene) {
         }
     }
 
-    auto* lId = m_editorDoc->GetElementById("prop-entity-id");
-    auto* lName = m_editorDoc->GetElementById("prop-entity-name");
+    auto* lId = m_cache.entityId;
+    auto* lName = m_cache.entityName;
 
     if (m_selectedEntity.isValid()) {
         if (lId) lId->SetInnerRML(std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())));
@@ -523,19 +563,19 @@ void EditorUIManager::update(Scene* scene) {
         if (lId) lId->SetInnerRML("-");
         if (lName) lName->SetInnerRML("None");
 
-        auto* px = m_editorDoc->GetElementById("prop-pos-x");
-        auto* py = m_editorDoc->GetElementById("prop-pos-y");
-        auto* pz = m_editorDoc->GetElementById("prop-pos-z");
+        auto* px = m_cache.posX;
+        auto* py = m_cache.posY;
+        auto* pz = m_cache.posZ;
         if (px && !px->IsClassSet("focused")) px->SetAttribute("value", "");
         if (py && !py->IsClassSet("focused")) py->SetAttribute("value", "");
         if (pz && !pz->IsClassSet("focused")) pz->SetAttribute("value", "");
 
-        auto* rot = m_editorDoc->GetElementById("prop-rot");
-        auto* scl = m_editorDoc->GetElementById("prop-scale");
-        auto* wx = m_editorDoc->GetElementById("prop-world-x");
-        auto* wy = m_editorDoc->GetElementById("prop-world-y");
-        auto* wz = m_editorDoc->GetElementById("prop-world-z");
-        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
+        auto* rot = m_cache.rot;
+        auto* scl = m_cache.scale;
+        auto* wx = m_cache.worldX;
+        auto* wy = m_cache.worldY;
+        auto* wz = m_cache.worldZ;
+        auto* pn = m_cache.parentName;
         if (rot) rot->SetInnerRML("-");
         if (scl) scl->SetInnerRML("-");
         if (wx) wx->SetInnerRML("-");
@@ -546,9 +586,9 @@ void EditorUIManager::update(Scene* scene) {
 
     if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {
         auto& transform = m_selectedEntity.getComponent<TransformComponent>();
-        auto* px = m_editorDoc->GetElementById("prop-pos-x");
-        auto* py = m_editorDoc->GetElementById("prop-pos-y");
-        auto* pz = m_editorDoc->GetElementById("prop-pos-z");
+        auto* px = m_cache.posX;
+        auto* py = m_cache.posY;
+        auto* pz = m_cache.posZ;
 
         if (px && py && pz && !px->IsClassSet("focused") && !py->IsClassSet("focused") && !pz->IsClassSet("focused")) {
             char buf[32];
@@ -557,7 +597,7 @@ void EditorUIManager::update(Scene* scene) {
             snprintf(buf, sizeof(buf), "%.4f", transform.position[2]); pz->SetAttribute("value", std::string(buf));
         }
 
-        auto* rot = m_editorDoc->GetElementById("prop-rot");
+        auto* rot = m_cache.rot;
         if (rot) {
             char buf[96];
             snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)",
@@ -565,7 +605,7 @@ void EditorUIManager::update(Scene* scene) {
             rot->SetInnerRML(buf);
         }
 
-        auto* scl = m_editorDoc->GetElementById("prop-scale");
+        auto* scl = m_cache.scale;
         if (scl) {
             char buf[64];
             snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)",
@@ -573,9 +613,9 @@ void EditorUIManager::update(Scene* scene) {
             scl->SetInnerRML(buf);
         }
 
-        auto* wx = m_editorDoc->GetElementById("prop-world-x");
-        auto* wy = m_editorDoc->GetElementById("prop-world-y");
-        auto* wz = m_editorDoc->GetElementById("prop-world-z");
+        auto* wx = m_cache.worldX;
+        auto* wy = m_cache.worldY;
+        auto* wz = m_cache.worldZ;
         if (wx && wy && wz) {
             char buf[32];
             snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); wx->SetInnerRML(buf);
@@ -583,7 +623,7 @@ void EditorUIManager::update(Scene* scene) {
             snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); wz->SetInnerRML(buf);
         }
 
-        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
+        auto* pn = m_cache.parentName;
         if (pn) {
             if (m_selectedEntity.hasComponent<HierarchyComponent>()) {
                 auto& hc = m_selectedEntity.getComponent<HierarchyComponent>();
@@ -603,52 +643,61 @@ void EditorUIManager::update(Scene* scene) {
         }
     }
 
-    auto* drawCallsEl = m_editorDoc->GetElementById("prop-draw-calls");
-    auto* trianglesEl = m_editorDoc->GetElementById("prop-triangles");
+    auto* drawCallsEl = m_cache.drawCalls;
+    auto* trianglesEl = m_cache.triangles;
     if (drawCallsEl) {
-        drawCallsEl->SetInnerRML(std::to_string(g_RenderStats_DrawCalls.load(std::memory_order_relaxed)));
+        std::string s = std::to_string(g_RenderStats_DrawCalls.load(std::memory_order_relaxed));
+        if (drawCallsEl->GetInnerRML() != s) drawCallsEl->SetInnerRML(s);
     }
     if (trianglesEl) {
-        trianglesEl->SetInnerRML(std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed)));
+        std::string s = std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed));
+        if (trianglesEl->GetInnerRML() != s) trianglesEl->SetInnerRML(s);
     }
 
-    auto* fpsEl = m_editorDoc->GetElementById("prop-fps");
-    auto* frameTimeEl = m_editorDoc->GetElementById("prop-frame-time");
+    auto* fpsEl = m_cache.fps;
+    auto* frameTimeEl = m_cache.frameTime;
     if (fpsEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.1f", g_RenderStats_FPS.load(std::memory_order_relaxed));
-        fpsEl->SetInnerRML(buf);
+        if (fpsEl->GetInnerRML() != buf) fpsEl->SetInnerRML(buf);
     }
     if (frameTimeEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_FrameTime.load(std::memory_order_relaxed));
-        frameTimeEl->SetInnerRML(buf);
+        if (frameTimeEl->GetInnerRML() != buf) frameTimeEl->SetInnerRML(buf);
     }
 
-    auto* logicTimeEl = m_editorDoc->GetElementById("prop-logic-time");
-    auto* rsTimeEl = m_editorDoc->GetElementById("prop-render-sync-time");
-    auto* prepTimeEl = m_editorDoc->GetElementById("prop-render-prep-time");
-    auto* drawTimeEl = m_editorDoc->GetElementById("prop-render-draw-time");
+    auto* uiTimeEl = m_cache.uiTime;
+    if (uiTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_UITime.load(std::memory_order_relaxed));
+        if (uiTimeEl->GetInnerRML() != buf) uiTimeEl->SetInnerRML(buf);
+    }
+
+    auto* logicTimeEl = m_cache.logicTime;
+    auto* rsTimeEl = m_cache.renderSyncTime;
+    auto* prepTimeEl = m_cache.renderPrepTime;
+    auto* drawTimeEl = m_cache.renderDrawTime;
 
     if (logicTimeEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_LogicTime.load(std::memory_order_relaxed));
-        logicTimeEl->SetInnerRML(buf);
+        if (logicTimeEl->GetInnerRML() != buf) logicTimeEl->SetInnerRML(buf);
     }
     if (rsTimeEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderSyncTime.load(std::memory_order_relaxed));
-        rsTimeEl->SetInnerRML(buf);
+        if (rsTimeEl->GetInnerRML() != buf) rsTimeEl->SetInnerRML(buf);
     }
     if (prepTimeEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderPrepTime.load(std::memory_order_relaxed));
-        prepTimeEl->SetInnerRML(buf);
+        if (prepTimeEl->GetInnerRML() != buf) prepTimeEl->SetInnerRML(buf);
     }
     if (drawTimeEl) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderDrawTime.load(std::memory_order_relaxed));
-        drawTimeEl->SetInnerRML(buf);
+        if (drawTimeEl->GetInnerRML() != buf) drawTimeEl->SetInnerRML(buf);
     }
 }
 

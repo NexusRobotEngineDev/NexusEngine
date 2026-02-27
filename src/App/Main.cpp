@@ -363,6 +363,146 @@ void ShutdownEngine() {
     g_window = nullptr;
 }
 
+void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
+    auto cameraView = registry.view<CameraComponent, TransformComponent>();
+
+    std::array<float, 16> viewProj = {
+        1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+    };
+
+    uint32_t width = 1280, height = 720;
+    if (g_window) {
+        width = static_cast<SDL_Window_Wrapper*>(g_window)->getWidth();
+        height = static_cast<SDL_Window_Wrapper*>(g_window)->getHeight();
+    }
+
+    for (auto entity : cameraView) {
+        auto& camera = cameraView.get<CameraComponent>(entity);
+        auto& transform = cameraView.get<TransformComponent>(entity);
+
+        camera.aspect = (float)width / ((float)height + 0.0001f);
+        auto proj = camera.computeProjectionMatrix();
+
+        float pos[3] = { transform.position[0], transform.position[1], transform.position[2] };
+        float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
+        float upVector[3] = { camera.up[0], camera.up[1], camera.up[2] };
+
+        float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
+        float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
+        if (fLen > 1e-5f) { fwd[0]/=fLen; fwd[1]/=fLen; fwd[2]/=fLen; }
+        else { fwd[0]=0; fwd[1]=0; fwd[2]=-1; }
+
+        float right[3] = {
+            fwd[1]*upVector[2] - fwd[2]*upVector[1],
+            fwd[2]*upVector[0] - fwd[0]*upVector[2],
+            fwd[0]*upVector[1] - fwd[1]*upVector[0]
+        };
+        float rLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+        if (rLen > 1e-5f) { right[0]/=rLen; right[1]/=rLen; right[2]/=rLen; }
+        else { right[0]=1; right[1]=0; right[2]=0; }
+
+        float up[3] = {
+            right[1]*fwd[2] - right[2]*fwd[1],
+            right[2]*fwd[0] - right[0]*fwd[2],
+            right[0]*fwd[1] - right[1]*fwd[0]
+        };
+
+        std::array<float, 16> view = {
+            right[0], up[0], -fwd[0], 0.0f,
+            right[1], up[1], -fwd[1], 0.0f,
+            right[2], up[2], -fwd[2], 0.0f,
+            -(right[0]*pos[0] + right[1]*pos[1] + right[2]*pos[2]),
+            -(up[0]*pos[0] + up[1]*pos[1] + up[2]*pos[2]),
+            fwd[0]*pos[0] + fwd[1]*pos[1] + fwd[2]*pos[2],
+            1.0f
+        };
+
+        viewProj = multiplyMat4(proj, view);
+        break;
+    }
+
+    auto meshView = registry.view<MeshComponent, TransformComponent>();
+
+    std::map<std::pair<IBuffer*, IBuffer*>, size_t> batchMap;
+
+    IBuffer* globalVb = g_context->getGlobalVertexBuffer();
+    IBuffer* globalIb = g_context->getGlobalIndexBuffer();
+
+    uint32_t selectedId = 0xFFFFFFFF;
+#if ENABLE_VULKAN
+    if (g_renderer) {
+        selectedId = g_renderer->getBridgeRenderer()->m_selectedEntityId.load(std::memory_order_relaxed);
+    }
+#endif
+
+    for (auto entity : meshView) {
+        auto& mesh = meshView.get<MeshComponent>(entity);
+        auto& transform = meshView.get<TransformComponent>(entity);
+
+        if (transform.worldMatrix[0] == 0.0f && transform.worldMatrix[5] == 0.0f && transform.worldMatrix[10] == 0.0f) {
+            continue;
+        }
+
+        std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
+
+        IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
+        IBuffer* currentIb = mesh.indexBuffer ? mesh.indexBuffer : globalIb;
+        if (!currentVb || !currentIb) continue;
+
+        ObjectData obj = {};
+        if (mesh.albedoTexture < 1000) {
+            obj.textureIndex = mesh.albedoTexture;
+        } else {
+            obj.textureIndex = 0;
+        }
+
+        if (mesh.samplerIndex < 1000) {
+            obj.samplerIndex = mesh.samplerIndex;
+        } else {
+            obj.samplerIndex = 0;
+        }
+
+        obj.albedoFactor = mesh.albedoFactor;
+        obj.metallicFactor = mesh.metallicFactor;
+        obj.roughnessFactor = mesh.roughnessFactor;
+        obj.mvp = mvp;
+        obj.worldMatrix = transform.worldMatrix;
+
+        bool isSelected = ((uint32_t)entity == selectedId);
+        if (isSelected) {
+            obj.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
+        } else {
+            obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
+        }
+
+        uint32_t entityIdx = (uint32_t)snapshot->frameObjects.size();
+        snapshot->frameObjects.push_back(obj);
+
+        DrawIndexedIndirectCommand cmd;
+        cmd.indexCount = mesh.indexCount;
+        cmd.instanceCount = 1;
+        cmd.firstIndex = mesh.indexOffset;
+        cmd.vertexOffset = mesh.vertexOffset;
+        cmd.firstInstance = entityIdx;
+
+        RenderDrawBatch* targetBatch = nullptr;
+        auto key = std::make_pair(currentVb, currentIb);
+        auto it = batchMap.find(key);
+        if (it != batchMap.end()) {
+            targetBatch = &snapshot->batches[it->second];
+        } else {
+            size_t newIdx = snapshot->batches.size();
+            snapshot->batches.push_back({currentVb, currentIb, {}});
+            targetBatch = &snapshot->batches.back();
+            batchMap[key] = newIdx;
+        }
+        targetBatch->commands.push_back(cmd);
+
+        snapshot->totalTriangles += mesh.indexCount / 3;
+        snapshot->meshCount++;
+    }
+}
+
 void RunMainLoop() {
     uint32_t lastWidth = 1280;
     uint32_t lastHeight = 720;
@@ -544,34 +684,62 @@ void RunMainLoop() {
             accumLogicTime += std::chrono::duration<double, std::milli>(logicEndTime - logicStartTime).count();
 
             auto syncStartTime = std::chrono::high_resolution_clock::now();
-            g_rhiThread->requestSync();
+            while (g_rhiThread->getQueueSize() >= 2) {
+                std::this_thread::yield();
+            }
             auto syncEndTime = std::chrono::high_resolution_clock::now();
             accumSyncTime += std::chrono::duration<double, std::milli>(syncEndTime - syncStartTime).count();
 
             auto prepStartTime = std::chrono::high_resolution_clock::now();
+            static float lh = 0, lc = 0, lpu = 0, lu = 0;
             if (g_scene) {
+                auto t1 = std::chrono::high_resolution_clock::now();
                 HierarchySystem::update(g_scene->getRegistry());
 
+                auto t2 = std::chrono::high_resolution_clock::now();
                 Cesium3DTilesetSystem::update(g_scene->getRegistry(), deltaTime);
 
+                auto t3 = std::chrono::high_resolution_clock::now();
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
                 }
+                auto t4 = std::chrono::high_resolution_clock::now();
+
+                lh += std::chrono::duration<float, std::milli>(t2 - t1).count();
+                lc += std::chrono::duration<float, std::milli>(t3 - t2).count();
+                lpu += std::chrono::duration<float, std::milli>(t4 - t3).count();
             }
 
+            auto t5 = std::chrono::high_resolution_clock::now();
             if (g_editorUIManager) {
                 g_editorUIManager->update(g_scene.get());
             }
             auto prepEndTime = std::chrono::high_resolution_clock::now();
+            lu += std::chrono::duration<float, std::milli>(prepEndTime - t5).count();
+
+            static int p_prep = 0;
+            if (++p_prep >= 60) {
+                NX_CORE_INFO("Logic Profile: Hier={:.2f}ms, Cesium={:.2f}ms, Phys={:.2f}ms, UIMgr={:.2f}ms", lh/60.0f, lc/60.0f, lpu/60.0f, lu/60.0f);
+                lh = 0; lc = 0; lpu = 0; lu = 0; p_prep = 0;
+            }
             accumPrepTime += std::chrono::duration<double, std::milli>(prepEndTime - prepStartTime).count();
 
-            g_rhiThread->resumeSync();
+            static RenderSnapshot sm_snapshots[4];
+            static uint32_t sm_currentSnapshot = 0;
+
+            RenderSnapshot* activeSnapshot = &sm_snapshots[sm_currentSnapshot];
+            activeSnapshot->clear();
+            if (g_scene) {
+                buildSnapshotFromRegistry(g_scene->getRegistry(), activeSnapshot);
+            }
 
             RenderCommand cmd;
             cmd.type = RenderCommandType::Draw;
-            cmd.registry = g_scene ? &g_scene->getRegistry() : nullptr;
+            cmd.snapshot = activeSnapshot;
             g_rhiThread->pushCommand(cmd);
+
+            sm_currentSnapshot = (sm_currentSnapshot + 1) % 4;
         }
 #else
         g_context->sync();
