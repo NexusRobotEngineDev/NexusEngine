@@ -27,6 +27,9 @@
 #include "Core/TextureManager.h"
 #include "Core/Cesium3DTilesetSystem.h"
 #include "Core/CesiumComponents.h"
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+
 
 #if defined(_MSC_VER)
 extern "C" {
@@ -582,12 +585,31 @@ void RunMainLoop() {
 
             auto& registry = g_scene->getRegistry();
             auto view = registry.view<CameraComponent, TransformComponent>();
-            float speed = 5.0f * deltaTime * g_input.cameraSpeedMultiplier;
             float sensitivity = 0.5f * deltaTime;
 
             for (auto entity : view) {
                 auto& transform = registry.get<TransformComponent>(entity);
                 auto& camera = registry.get<CameraComponent>(entity);
+
+                double altitude = 5.0;
+                auto tilesetView = registry.view<Cesium3DTileset, CesiumGeoreference>();
+                for (auto tsEntity : tilesetView) {
+                    auto& geoRef = tilesetView.get<CesiumGeoreference>(tsEntity);
+                    if (geoRef.m_localCoordinateSystem) {
+                        glm::dvec3 camEnuPosition(transform.position[0], -transform.position[2], transform.position[1]);
+                        glm::dvec3 ecefPosition = geoRef.m_localCoordinateSystem->localPositionToEcef(camEnuPosition);
+                        auto carto = CesiumGeospatial::Ellipsoid::WGS84.cartesianToCartographic(ecefPosition);
+                        if (carto) {
+                            altitude = carto->height;
+                        }
+
+                        break;
+                    }
+                }
+
+                float safeAltitude = std::max(0.0f, static_cast<float>(altitude));
+                float baseSpeed = std::clamp((safeAltitude * safeAltitude) * 0.005f, 1.0f, 150000.0f);
+                float speed = baseSpeed * deltaTime * g_input.cameraSpeedMultiplier;
 
                 if (g_input.mouseRightDown) {
                     float dx = g_input.mouseDeltaX.exchange(0.0f);
