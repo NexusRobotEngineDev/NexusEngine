@@ -153,6 +153,14 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
         convertTreeToYUp(reg, rootEntity, zToY);
 
         applyOffsetToTree(reg, rootEntity, offsetX, offsetY, offsetZ);
+
+        static int s_printCounter = 0;
+        if (++s_printCounter % 120 == 0) {
+            auto& tr = reg.get<TransformComponent>(rootEntity);
+            const double* pos = mj->m_data->xpos + 3 * mj_name2id(mj->m_model, mjOBJ_BODY, "base_link");
+            NX_CORE_INFO("RoboticsDynamicsSystem: base_link MuJoCo pos=({:.3f}, {:.3f}, {:.3f}), Engine WorldMat trans=({:.3f}, {:.3f}, {:.3f})",
+                 pos[0], pos[1], pos[2], tr.worldMatrix[12], tr.worldMatrix[13], tr.worldMatrix[14]);
+        }
     }
 }
 
