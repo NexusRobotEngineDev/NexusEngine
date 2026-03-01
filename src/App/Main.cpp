@@ -274,8 +274,8 @@ Status InitializeEngine(const EngineConfig& config) {
     auto& vsCam = vsEnt.addComponent<CameraComponent>();
     vsCam.fov = 60.0f;
     auto& vsTr = vsEnt.getComponent<TransformComponent>();
-    vsTr.position = {0.3f, 0.0f, 0.1f};
-    vsEnt.addComponent<RigidBodyComponent>("base_link");
+    vsTr.position = {0.0f, 0.0f, 0.0f};
+    vsEnt.addComponent<RigidBodyComponent>("front_camera");
     g_renderer->getBridgeRenderer()->setVisionSensorCamera((entt::entity)vsEnt);
 
 #else
@@ -461,6 +461,13 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             right[2]*fwd[0] - right[0]*fwd[2],
             right[0]*fwd[1] - right[1]*fwd[0]
         };
+
+        if (isVisionSensor) {
+            float old_r[3] = { right[0], right[1], right[2] };
+            float old_u[3] = { up[0], up[1], up[2] };
+            right[0] = old_u[0]; right[1] = old_u[1]; right[2] = old_u[2];
+            up[0] = -old_r[0];   up[1] = -old_r[1];   up[2] = -old_r[2];
+        }
 
         std::array<float, 16> view = {
             right[0], up[0], -fwd[0], 0.0f,
