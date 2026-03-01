@@ -63,6 +63,9 @@ public:
 
     VK_UIBridge* getUIBridge() { return m_uiBridge.get(); }
 
+    void setVisionSensorCamera(entt::entity camEntity) { m_visionSensorEntity = camEntity; }
+    bool getOffscreenPixels(std::vector<uint8_t>& outPixels);
+
     /**
      * @brief 等待设备空闲
      */
@@ -78,7 +81,10 @@ private:
     Status createGraphicsPipeline();
     Status createCommandBuffers();
     Status createSyncObjects();
+    Status createOffscreenResources();
+    void uploadSnapshotData(RenderSnapshot* snapshot);
     void recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot);
+    void recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, RenderSnapshot* snapshot);
 
     VK_Context* m_context;
     VK_Swapchain* m_swapchain;
@@ -108,6 +114,14 @@ private:
     std::unique_ptr<VK_Buffer> m_objectDataBuffer;
     uint32_t m_currentFrame = 0;
     static constexpr int MAX_FRAMES_IN_FLIGHT = 3;
+
+    std::unique_ptr<VK_Texture> m_offscreenColor;
+    std::unique_ptr<VK_Texture> m_offscreenDepth;
+    std::unique_ptr<VK_Buffer> m_offscreenReadback;
+    void* m_offscreenReadbackMapped = nullptr;
+    vk::Extent2D m_offscreenExtent = {640, 480};
+    entt::entity m_visionSensorEntity = entt::null;
+    bool m_offscreenReady = false;
 public:
     std::atomic<uint32_t> m_selectedEntityId{0xFFFFFFFF};
 };

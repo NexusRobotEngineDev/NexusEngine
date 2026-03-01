@@ -64,7 +64,11 @@ public:
 private:
     IContext* m_context;
     std::mutex m_mutex;
-    std::unordered_map<std::string, std::unique_ptr<ITexture>> m_textures;
+    struct TextureEntry {
+        std::unique_ptr<ITexture> texture;
+        int refCount = 1;
+    };
+    std::unordered_map<std::string, TextureEntry> m_textures;
 
     struct GcEntry {
         std::unique_ptr<ITexture> texture;

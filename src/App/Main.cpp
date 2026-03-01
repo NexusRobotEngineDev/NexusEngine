@@ -269,6 +269,15 @@ Status InitializeEngine(const EngineConfig& config) {
         tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YzFmM2RhZC0wZTM1LTQwNTgtOGJhNy00YzQ3MDAyN2IxNjQiLCJpZCI6NDEyMDc2LCJpYXQiOjE3NzUwMTI2ODl9.JFwAvTfQCe8wvmczvyfqbP8BvwxjZ09WLjZpF7U4rhU";
         NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
     }
+
+    Entity vsEnt = g_scene->createEntity("VisionSensor");
+    auto& vsCam = vsEnt.addComponent<CameraComponent>();
+    vsCam.fov = 60.0f;
+    auto& vsTr = vsEnt.getComponent<TransformComponent>();
+    vsTr.position = {0.3f, 0.0f, 0.1f};
+    vsEnt.addComponent<RigidBodyComponent>("base_link");
+    g_renderer->getBridgeRenderer()->setVisionSensorCamera((entt::entity)vsEnt);
+
 #else
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
 #endif
@@ -381,16 +390,57 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         height = static_cast<SDL_Window_Wrapper*>(g_window)->getHeight();
     }
 
+    bool mainCameraProcessed = false;
     for (auto entity : cameraView) {
         auto& camera = cameraView.get<CameraComponent>(entity);
         auto& transform = cameraView.get<TransformComponent>(entity);
 
-        camera.aspect = (float)width / ((float)height + 0.0001f);
+        bool isVisionSensor = false;
+        if (registry.has<TagComponent>(entity)) {
+            if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+                isVisionSensor = true;
+            }
+        }
+
+        if (!isVisionSensor && mainCameraProcessed) {
+            continue;
+        }
+
+        if (isVisionSensor) {
+            camera.aspect = 640.0f / 480.0f;
+        } else {
+            camera.aspect = (float)width / ((float)height + 0.0001f);
+        }
         auto proj = camera.computeProjectionMatrix();
 
-        float pos[3] = { transform.position[0], transform.position[1], transform.position[2] };
+        float pos[3];
+        if (isVisionSensor) {
+            pos[0] = transform.worldMatrix[12];
+            pos[1] = transform.worldMatrix[13];
+            pos[2] = transform.worldMatrix[14];
+        } else {
+            pos[0] = transform.worldMatrix[12];
+            pos[1] = transform.worldMatrix[13];
+            pos[2] = transform.worldMatrix[14];
+        }
+
         float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
-        float upVector[3] = { camera.up[0], camera.up[1], camera.up[2] };
+        float upVector[3] = { 0.0f, 0.0f, 1.0f };
+        if (!isVisionSensor) {
+            upVector[0] = camera.up[0]; upVector[1] = camera.up[1]; upVector[2] = camera.up[2];
+        } else {
+             float fwd_x = transform.worldMatrix[0];
+             float fwd_y = transform.worldMatrix[1];
+             float fwd_z = transform.worldMatrix[2];
+
+             target[0] = pos[0] + fwd_x;
+             target[1] = pos[1] + fwd_y;
+             target[2] = pos[2] + fwd_z;
+
+             upVector[0] = transform.worldMatrix[8];
+             upVector[1] = transform.worldMatrix[9];
+             upVector[2] = transform.worldMatrix[10];
+        }
 
         float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
         float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
@@ -422,8 +472,13 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             1.0f
         };
 
-        viewProj = multiplyMat4(proj, view);
-        break;
+        if (isVisionSensor) {
+            snapshot->visionSensorViewProj = multiplyMat4(proj, view);
+            snapshot->visionSensorValid = true;
+        } else {
+            viewProj = multiplyMat4(proj, view);
+            mainCameraProcessed = true;
+        }
     }
 
     auto meshView = registry.view<MeshComponent, TransformComponent>();
@@ -588,6 +643,12 @@ void RunMainLoop() {
             float sensitivity = 0.5f * deltaTime;
 
             for (auto entity : view) {
+                if (registry.has<TagComponent>(entity)) {
+                    if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+                        continue;
+                    }
+                }
+
                 auto& transform = registry.get<TransformComponent>(entity);
                 auto& camera = registry.get<CameraComponent>(entity);
 
@@ -776,6 +837,11 @@ void RunMainLoop() {
             g_rhiThread->pushCommand(cmd);
 
             sm_currentSnapshot = (sm_currentSnapshot + 1) % 4;
+
+            std::vector<uint8_t> pixels;
+            if (g_renderer && g_renderer->getBridgeRenderer()->getOffscreenPixels(pixels)) {
+                if (g_rosBridge) g_rosBridge->publishImage(pixels, 640, 480);
+            }
         }
 #else
         g_context->sync();

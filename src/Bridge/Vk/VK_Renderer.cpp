@@ -54,6 +54,13 @@ void VK_Renderer::shutdown() {
         m_device.destroyPipelineLayout(m_pipelineLayout);
         m_pipelineLayout = nullptr;
     }
+
+    if (m_offscreenReadbackMapped) {
+        m_offscreenReadbackMapped = nullptr;
+    }
+    m_offscreenReadback.reset();
+    m_offscreenDepth.reset();
+    m_offscreenColor.reset();
 }
 
 Status VK_Renderer::initialize() {
@@ -67,7 +74,6 @@ Status VK_Renderer::initialize() {
     if (auto status = createSyncObjects(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 5: createSwapchainTextures");
     if (auto status = createSwapchainTextures(); !status.ok()) return status;
-
     ImageData imageData;
     auto imageRes = ResourceLoader::loadImage("Data/Textures/test.png");
     if (imageRes.ok()) {
@@ -91,6 +97,9 @@ Status VK_Renderer::initialize() {
     NX_CORE_INFO("VK_Renderer::initialize - 6: create default textures");
     m_testTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
+
+    NX_CORE_INFO("VK_Renderer::initialize - 6.1: createOffscreenResources");
+    if (auto status = createOffscreenResources(); !status.ok()) return status;
 
     NX_CORE_INFO("VK_Renderer::initialize - 7: alloc indirect buffers");
     m_indirectBuffers.resize(MAX_FRAMES_IN_FLIGHT);
@@ -126,6 +135,27 @@ Status VK_Renderer::createSwapchainTextures() {
         tex->initializeFromExisting(images[i], views[i], m_swapchain->getImageFormat(), m_swapchain->getExtent().width, m_swapchain->getExtent().height);
         m_swapchainTextures.push_back(std::move(tex));
     }
+    return OkStatus();
+}
+
+Status VK_Renderer::createOffscreenResources() {
+    ImageData dummyData;
+    dummyData.width = m_offscreenExtent.width;
+    dummyData.height = m_offscreenExtent.height;
+    dummyData.channels = 4;
+    dummyData.pixels.resize(dummyData.width * dummyData.height * 4, 128);
+
+    m_offscreenColor = std::make_unique<VK_Texture>(m_context);
+    NX_RETURN_IF_ERROR(m_offscreenColor->create(dummyData, TextureUsage::Attachment));
+
+    m_offscreenDepth = std::make_unique<VK_Texture>(m_context);
+    NX_RETURN_IF_ERROR(m_offscreenDepth->createDepth(m_offscreenExtent.width, m_offscreenExtent.height, m_swapchain->getDepthFormat()));
+
+    m_offscreenReadback = std::make_unique<VK_Buffer>(m_context);
+    size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
+    NX_RETURN_IF_ERROR(m_offscreenReadback->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    m_offscreenReadbackMapped = m_offscreenReadback->map();
+
     return OkStatus();
 }
 
@@ -237,7 +267,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     vk::PushConstantRange pushConstantRange;
     pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(uint32_t);
+    pushConstantRange.size = 80;
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
@@ -348,12 +378,6 @@ Status VK_Renderer::createSyncObjects() {
 }
 
 void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot) {
-    vk::CommandBufferBeginInfo beginInfo;
-
-    if (commandBuffer.begin(&beginInfo) != vk::Result::eSuccess) {
-        return;
-    }
-
     vk::Extent2D extent = m_swapchain->getExtent();
 
     vk::ImageMemoryBarrier colorBarrier;
@@ -433,18 +457,19 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
         uint32_t frameOffset = m_currentFrame * objCap;
 
         if (!snapshot->frameObjects.empty()) {
-            (void)m_objectDataBuffer->uploadData(snapshot->frameObjects.data(), snapshot->frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
-
-            std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
-            allIndirectCommands.reserve(snapshot->frameObjects.size());
-            for (const auto& batch : snapshot->batches) {
-                allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
-            }
-            (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+            struct PushParams {
+                uint32_t frameOffset;
+                uint32_t useCustomVP;
+                float pad[2];
+                std::array<float, 16> customViewProj;
+            };
+            PushParams params = {};
+            params.frameOffset = m_currentFrame * 100000;
+            params.useCustomVP = 0;
 
             vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
             commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
-            commandBuffer.pushConstants<uint32_t>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, frameOffset);
+            commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
 
             uint32_t commandOffset = 0;
             for (const auto& batch : snapshot->batches) {
@@ -491,7 +516,150 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     colorBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
 
     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
-    (void)commandBuffer.end();
+}
+
+void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, RenderSnapshot* snapshot) {
+    if (!snapshot || snapshot->frameObjects.empty()) return;
+
+    m_offscreenReady = false;
+
+
+    vk::ImageMemoryBarrier colorBarrier;
+    colorBarrier.srcAccessMask = {};
+    colorBarrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.oldLayout = vk::ImageLayout::eUndefined;
+    colorBarrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.image = m_offscreenColor->getImage();
+    colorBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    colorBarrier.subresourceRange.baseMipLevel = 0;
+    colorBarrier.subresourceRange.levelCount = 1;
+    colorBarrier.subresourceRange.baseArrayLayer = 0;
+    colorBarrier.subresourceRange.layerCount = 1;
+
+    vk::ImageMemoryBarrier depthBarrier = colorBarrier;
+    depthBarrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+    depthBarrier.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthBarrier.image = m_offscreenDepth->getImage();
+    depthBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+    vk::ImageMemoryBarrier barriers[] = { colorBarrier, depthBarrier };
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                                  vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+                                  {}, 0, nullptr, 0, nullptr, 2, barriers);
+
+    vk::RenderingAttachmentInfo colorAttachment;
+    colorAttachment.imageView = m_offscreenColor->getView();
+    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    colorAttachment.clearValue = vk::ClearValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+
+    vk::RenderingAttachmentInfo depthAttachment;
+    depthAttachment.imageView = m_offscreenDepth->getView();
+    depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(0.0f, 0);
+
+    vk::RenderingInfo renderingInfo;
+    renderingInfo.renderArea = vk::Rect2D({0, 0}, m_offscreenExtent);
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+    renderingInfo.pDepthAttachment = &depthAttachment;
+
+    commandBuffer.beginRendering(&renderingInfo);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
+
+    vk::Viewport viewport;
+    viewport.x = 0.0f;
+    viewport.y = (float)m_offscreenExtent.height;
+    viewport.width = (float)m_offscreenExtent.width;
+    viewport.height = -(float)m_offscreenExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    commandBuffer.setViewport(0, 1, &viewport);
+
+    vk::Rect2D scissor;
+    scissor.offset = vk::Offset2D(0, 0);
+    scissor.extent = m_offscreenExtent;
+    commandBuffer.setScissor(0, 1, &scissor);
+
+
+    struct PushParams {
+        uint32_t frameOffset;
+        uint32_t useCustomVP;
+        float pad[2];
+        std::array<float, 16> customViewProj;
+    };
+    PushParams params = {};
+    params.frameOffset = m_currentFrame * 100000;
+
+    if (snapshot->visionSensorValid) {
+        params.useCustomVP = 1;
+        params.customViewProj = snapshot->visionSensorViewProj;
+    } else {
+        params.useCustomVP = 0;
+    }
+
+    vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
+    commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
+
+    uint32_t commandOffset = 0;
+    for (const auto& batch : snapshot->batches) {
+        vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vertexBuffer)->getHandle() };
+        vk::DeviceSize offsets[] = { 0 };
+        commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+        commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.indexBuffer)->getHandle(), 0, vk::IndexType::eUint32);
+        commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
+        commandOffset += (uint32_t)batch.commands.size();
+    }
+
+    commandBuffer.endRendering();
+
+    colorBarrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+    colorBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTransfer, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+
+    vk::BufferImageCopy region;
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = vk::Offset3D{0, 0, 0};
+    region.imageExtent = vk::Extent3D{m_offscreenExtent.width, m_offscreenExtent.height, 1};
+
+    commandBuffer.copyImageToBuffer(m_offscreenColor->getImage(), vk::ImageLayout::eTransferSrcOptimal, m_offscreenReadback->getHandle(), 1, &region);
+
+    vk::BufferMemoryBarrier bufBarrier;
+    bufBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    bufBarrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
+    bufBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufBarrier.buffer = m_offscreenReadback->getHandle();
+    bufBarrier.offset = 0;
+    bufBarrier.size = VK_WHOLE_SIZE;
+
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 0, nullptr, 1, &bufBarrier, 0, nullptr);
+
+    m_offscreenReady = true;
+}
+
+bool VK_Renderer::getOffscreenPixels(std::vector<uint8_t>& outPixels) {
+    if (!m_offscreenReady || !m_offscreenReadbackMapped) return false;
+
+    size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
+    outPixels.resize(size);
+    memcpy(outPixels.data(), m_offscreenReadbackMapped, size);
+    return true;
 }
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
@@ -523,7 +691,24 @@ void VK_Renderer::updateWindowSize(int width, int height) {
 Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
+
+    if (snapshot) {
+        uploadSnapshotData(snapshot);
+    }
+
+    vk::CommandBufferBeginInfo beginInfo;
+    if (m_commandBuffers[m_currentFrame].begin(&beginInfo) != vk::Result::eSuccess) {
+        return InternalError("Failed to begin cmd buffer");
+    }
+
+    if (m_visionSensorEntity != entt::null && snapshot) {
+        recordOffscreenCommandBuffer(m_commandBuffers[m_currentFrame], snapshot);
+    }
+
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
+
+    m_commandBuffers[m_currentFrame].end();
+
     endFrame(imageIndex);
     return OkStatus();
 }
@@ -627,4 +812,22 @@ void VK_Renderer::present(uint32_t imageIndex) {
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 void VK_Renderer::deviceWaitIdle() { (void)m_device.waitIdle(); }
+
+void VK_Renderer::uploadSnapshotData(RenderSnapshot* snapshot) {
+    if (!snapshot || snapshot->frameObjects.empty()) return;
+
+    size_t objCap = 100000;
+    uint32_t frameOffset = m_currentFrame * objCap;
+
+    (void)m_objectDataBuffer->uploadData(snapshot->frameObjects.data(), snapshot->frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
+
+    std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
+    allIndirectCommands.reserve(snapshot->frameObjects.size());
+    for (const auto& batch : snapshot->batches) {
+        allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
+    }
+
+    (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+}
+
 } // namespace Nexus

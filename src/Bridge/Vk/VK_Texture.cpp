@@ -116,6 +116,29 @@ Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format,
     return createSampler();
 }
 
+Status VK_Texture::createDepth(uint32_t width, uint32_t height, vk::Format format) {
+    m_ownsResources = true;
+    auto device = m_context->getDevice();
+    m_width = width;
+    m_height = height;
+    m_format = TextureFormat::RGBA8_UNORM;
+
+    vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, format, {m_width, m_height, 1}, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment);
+    auto imgResult = device.createImage(imageInfo);
+    if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth attachment image");
+    m_image = imgResult.value;
+    vk::MemoryRequirements memReq = device.getImageMemoryRequirements(m_image);
+    auto memResult = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)});
+    if (memResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate depth attachment memory");
+    m_memory = memResult.value;
+    (void)device.bindImageMemory(m_image, m_memory, 0);
+    vk::ImageViewCreateInfo viewInfo({}, m_image, vk::ImageViewType::e2D, format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1});
+    auto viewResult = device.createImageView(viewInfo);
+    if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth attachment view");
+    m_view = viewResult.value;
+    return OkStatus();
+}
+
 Status VK_Texture::createSampler() {
     vk::SamplerCreateInfo samplerInfo;
     samplerInfo.magFilter = vk::Filter::eLinear;

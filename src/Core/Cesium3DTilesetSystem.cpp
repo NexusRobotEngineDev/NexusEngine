@@ -46,35 +46,71 @@ void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, T
 void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
     auto cameraView = registry.view<CameraComponent, TransformComponent>();
 
-    entt::entity camEntity = entt::null;
+    struct CameraState {
+        glm::dvec3 pos;
+        glm::dvec3 dir;
+        glm::dvec3 up;
+        double aspect;
+        double fovY;
+    };
+    std::vector<CameraState> activeCameras;
+
+    bool mainCameraFound = false;
     for (auto entity : cameraView) {
-        camEntity = entity;
-        break;
+        auto& camera = cameraView.get<CameraComponent>(entity);
+        auto& camTransform = cameraView.get<TransformComponent>(entity);
+
+        bool isVisionSensor = false;
+        if (registry.has<TagComponent>(entity)) {
+            if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+                isVisionSensor = true;
+            }
+        }
+
+        if (!isVisionSensor && mainCameraFound) {
+            continue;
+        }
+
+        CameraState state;
+        if (isVisionSensor) {
+            state.pos = glm::dvec3(camTransform.worldMatrix[12], camTransform.worldMatrix[13], camTransform.worldMatrix[14]);
+
+            state.dir = glm::dvec3(camTransform.worldMatrix[0], camTransform.worldMatrix[1], camTransform.worldMatrix[2]);
+            if (glm::length(state.dir) > 0.0001) state.dir = glm::normalize(state.dir);
+            else state.dir = glm::dvec3(1.0, 0.0, 0.0);
+
+            state.up = glm::dvec3(camTransform.worldMatrix[8], camTransform.worldMatrix[9], camTransform.worldMatrix[10]);
+            if (glm::length(state.up) > 0.0001) state.up = glm::normalize(state.up);
+            else state.up = glm::dvec3(0.0, 0.0, 1.0);
+
+            state.aspect = 640.0 / 480.0;
+            state.fovY = 60.0f;
+        } else {
+            state.pos = glm::dvec3(camTransform.worldMatrix[12], camTransform.worldMatrix[13], camTransform.worldMatrix[14]);
+
+            state.dir = glm::dvec3(camera.target[0] - state.pos.x,
+                                   camera.target[1] - state.pos.y,
+                                   camera.target[2] - state.pos.z);
+            if (glm::length(state.dir) > 0.0001) state.dir = glm::normalize(state.dir);
+            else state.dir = glm::dvec3(0.0, 0.0, -1.0);
+
+            state.up = glm::dvec3(camera.up[0], camera.up[1], camera.up[2]);
+            if (glm::length(state.up) > 0.0001) state.up = glm::normalize(state.up);
+            else state.up = glm::dvec3(0.0, 0.0, 1.0);
+
+            state.aspect = camera.aspect;
+            if (state.aspect <= 0.01) state.aspect = 1920.0 / 1080.0;
+            state.fovY = camera.fov;
+
+            mainCameraFound = true;
+        }
+
+        activeCameras.push_back(state);
     }
 
-    if (camEntity == entt::null) {
+    if (activeCameras.empty()) {
         return;
     }
-
-    auto& camera = registry.get<CameraComponent>(camEntity);
-    auto& camTransform = registry.get<TransformComponent>(camEntity);
-
-    double viewportWidth = 1920.0;
-    double viewportHeight = 1080.0;
-
-    glm::dvec3 cameraLocalPosition(camTransform.worldMatrix[12], camTransform.worldMatrix[13], camTransform.worldMatrix[14]);
-
-    glm::dvec3 cameraLocalDirection(camera.target[0] - cameraLocalPosition.x,
-                                    camera.target[1] - cameraLocalPosition.y,
-                                    camera.target[2] - cameraLocalPosition.z);
-    if (glm::length(cameraLocalDirection) > 0.0001) {
-        cameraLocalDirection = glm::normalize(cameraLocalDirection);
-    } else {
-        cameraLocalDirection = glm::dvec3(0.0, 0.0, -1.0);
-    }
-
-    glm::dvec3 cameraLocalUp(camera.up[0], camera.up[1], camera.up[2]);
-    cameraLocalUp = glm::normalize(cameraLocalUp);
 
     auto tilesetView = registry.view<Cesium3DTileset, CesiumGeoreference>();
 
@@ -127,25 +163,31 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
             );
         }
 
-        glm::dvec3 camEnuPosition(cameraLocalPosition.x, -cameraLocalPosition.z, cameraLocalPosition.y);
-        glm::dvec3 camEnuDirection(cameraLocalDirection.x, -cameraLocalDirection.z, cameraLocalDirection.y);
-        glm::dvec3 camEnuUp(cameraLocalUp.x, -cameraLocalUp.z, cameraLocalUp.y);
+        std::vector<Cesium3DTilesSelection::ViewState> frustums;
+        for (const auto& cam : activeCameras) {
+            glm::dvec3 camEnuPosition(cam.pos.x, -cam.pos.z, cam.pos.y);
+            glm::dvec3 camEnuDirection(cam.dir.x, -cam.dir.z, cam.dir.y);
+            glm::dvec3 camEnuUp(cam.up.x, -cam.up.z, cam.up.y);
 
-        glm::dvec3 ecefPosition = geoRef.m_localCoordinateSystem->localPositionToEcef(camEnuPosition);
-        glm::dvec3 ecefDirection = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuDirection);
-        glm::dvec3 ecefUp = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuUp);
+            glm::dvec3 ecefPosition = geoRef.m_localCoordinateSystem->localPositionToEcef(camEnuPosition);
+            glm::dvec3 ecefDirection = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuDirection);
+            glm::dvec3 ecefUp = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuUp);
 
-        Cesium3DTilesSelection::ViewState viewState = Cesium3DTilesSelection::ViewState::create(
-            ecefPosition,
-            ecefDirection,
-            ecefUp,
-            glm::dvec2(viewportWidth, viewportHeight),
-            glm::radians(static_cast<double>(camera.aspect * camera.fov)),
-            glm::radians(static_cast<double>(camera.fov))
-        );
+            double baseHeight = 1080.0;
+            double baseWidth = baseHeight * cam.aspect;
 
-        if (!tilesetComponent.m_suspendUpdate) {
-            std::vector<Cesium3DTilesSelection::ViewState> frustums = { viewState };
+            Cesium3DTilesSelection::ViewState viewState = Cesium3DTilesSelection::ViewState::create(
+                ecefPosition,
+                ecefDirection,
+                ecefUp,
+                glm::dvec2(baseWidth, baseHeight),
+                2.0 * std::atan(cam.aspect * std::tan(glm::radians(static_cast<double>(cam.fovY)) / 2.0)),
+                glm::radians(static_cast<double>(cam.fovY))
+            );
+            frustums.push_back(viewState);
+        }
+
+        if (!tilesetComponent.m_suspendUpdate && !frustums.empty()) {
             const auto& result = tilesetComponent.m_tileset->updateView(frustums, dt);
 
             static float debugPrintTimer = 0.0f;
@@ -221,8 +263,8 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
 
                     fprintf(diagFile, "\necefToEnu col3 (translation): (%.1f, %.1f, %.1f)\n",
                         ecefToEnu[3][0], ecefToEnu[3][1], ecefToEnu[3][2]);
-                    fprintf(diagFile, "camera pos: (%.2f, %.2f, %.2f)\n",
-                        cameraLocalPosition.x, cameraLocalPosition.y, cameraLocalPosition.z);
+                    fprintf(diagFile, "camera count: %zu, main pos: (%.2f, %.2f, %.2f)\n",
+                        activeCameras.size(), activeCameras[0].pos.x, activeCameras[0].pos.y, activeCameras[0].pos.z);
 
                     bool dumpedTile = false;
                     for (const auto* pTile2 : result.tilesToRenderThisFrame) {

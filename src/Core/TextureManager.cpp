@@ -36,8 +36,9 @@ ITexture* TextureManager::getOrCreateTexture(const std::string& path) {
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_textures.find(path);
         if (it != m_textures.end()) {
-            NX_CORE_INFO("[TextureDebug] Cache Hit: {}", path);
-            return it->second.get();
+            it->second.refCount++;
+            NX_CORE_INFO("[TextureDebug] Cache Hit: {} (Ref: {})", path, it->second.refCount);
+            return it->second.texture.get();
         }
     }
 
@@ -59,7 +60,7 @@ ITexture* TextureManager::getOrCreateTexture(const std::string& path) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_textures[path] = std::move(texture);
+        m_textures[path] = {std::move(texture), 1};
     }
 
     return ptr;
@@ -70,8 +71,9 @@ ITexture* TextureManager::createTextureFromMemory(const std::string& key, const 
         std::lock_guard<std::mutex> lock(m_mutex);
         auto it = m_textures.find(key);
         if (it != m_textures.end()) {
-            NX_CORE_INFO("[TextureDebug] Cache Hit for Memory Texture: {}", key);
-            return it->second.get();
+            it->second.refCount++;
+            NX_CORE_INFO("[TextureDebug] Cache Hit for Memory Texture: {} (Ref: {})", key, it->second.refCount);
+            return it->second.texture.get();
         }
     }
 
@@ -84,7 +86,7 @@ ITexture* TextureManager::createTextureFromMemory(const std::string& key, const 
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_textures[key] = std::move(texture);
+        m_textures[key] = {std::move(texture), 1};
     }
 
     return ptr;
@@ -92,15 +94,18 @@ ITexture* TextureManager::createTextureFromMemory(const std::string& key, const 
 
 void TextureManager::addTexture(const std::string& key, std::unique_ptr<ITexture> texture) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_textures[key] = std::move(texture);
+    m_textures[key] = {std::move(texture), 1};
 }
 
 void TextureManager::removeTexture(const std::string& key) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto it = m_textures.find(key);
     if (it != m_textures.end()) {
-        m_gcQueue.push_back({std::move(it->second), 3});
-        m_textures.erase(it);
+        it->second.refCount--;
+        if (it->second.refCount <= 0) {
+            m_gcQueue.push_back({std::move(it->second.texture), 3});
+            m_textures.erase(it);
+        }
     }
 }
 

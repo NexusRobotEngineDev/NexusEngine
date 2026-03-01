@@ -21,6 +21,7 @@ public:
      */
     Status create(const ImageData& imageData, TextureUsage usage);
     Status create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage);
+    Status createDepth(uint32_t width, uint32_t height, vk::Format format);
     void initializeFromExisting(vk::Image image, vk::ImageView view, vk::Format format, uint32_t width, uint32_t height);
 
     /**

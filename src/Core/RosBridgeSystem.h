@@ -54,6 +54,11 @@ public:
     void publishModelInfo(IPhysicsSystem* physicsSystem);
 
     /**
+     * @brief 发送视觉传感器图像
+     */
+    void publishImage(const std::vector<uint8_t>& imagePixels, int width, int height);
+
+    /**
      * @brief 设置当前机器人的标识信息
      * @param robotId 实例 ID (如 "go2_0")
      * @param robotName 模型名 (如 "unitree_go2"，用于 Bridge 匹配驱动)

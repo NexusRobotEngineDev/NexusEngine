@@ -32,6 +32,9 @@ struct ObjectData {
 
 struct PushParams {
     uint frameOffset;
+    uint useCustomVP;
+    float2 pad;
+    float4x4 customViewProj;
 };
 
 [[vk::push_constant]]
@@ -48,7 +51,13 @@ Texture2D textures[];
 PSInput VSMain(VSInput input, uint instanceID : SV_InstanceID) {
     PSInput output;
     uint objIndex = pushParams.frameOffset + instanceID;
-    output.Pos = mul(objects[objIndex].mvp, float4(input.Pos, 1.0));
+
+    if (pushParams.useCustomVP != 0) {
+        output.Pos = mul(pushParams.customViewProj, mul(objects[objIndex].normalMatrix, float4(input.Pos, 1.0)));
+    } else {
+        output.Pos = mul(objects[objIndex].mvp, float4(input.Pos, 1.0));
+    }
+
     output.WorldPos = input.Pos;
     output.Normal = normalize(mul((float3x3)objects[objIndex].normalMatrix, input.Normal));
     output.UV = input.UV;
