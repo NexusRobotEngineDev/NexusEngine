@@ -152,5 +152,8 @@ uint32_t RenderSystem::acquireNextImage() {
 void RenderSystem::present(uint32_t imageIndex) {
     m_bridgeRenderer->present(imageIndex);
 }
+uint64_t RenderSystem::getFrameCount() const {
+    return m_bridgeRenderer->getFrameCount();
+}
 } // namespace Core
 } // namespace Nexus

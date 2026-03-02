@@ -33,7 +33,7 @@ Status VK_Buffer::create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::Me
     }
     m_memory = allocResult.value;
 
-    device.bindBufferMemory(m_buffer, m_memory, 0);
+    (void)device.bindBufferMemory(m_buffer, m_memory, 0);
 
     return OkStatus();
 }

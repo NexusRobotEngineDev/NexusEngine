@@ -85,6 +85,7 @@ void VK_BindlessManager::shutdown() {
 }
 
 uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     uint32_t index = 0;
     if (!m_freeTextureIndices.empty()) {
         index = m_freeTextureIndices.back();
@@ -116,6 +117,7 @@ uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
 }
 
 uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     uint32_t index = 0;
     if (!m_freeSamplerIndices.empty()) {
         index = m_freeSamplerIndices.back();
@@ -145,7 +147,27 @@ uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
     return index;
 }
 
+void VK_BindlessManager::updateTexture(uint32_t index, vk::ImageView newView) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    vk::DescriptorImageInfo imageInfo;
+    imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    imageInfo.imageView = newView;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = m_set;
+    write.dstBinding = 1;
+    write.dstArrayElement = index;
+    write.descriptorType = vk::DescriptorType::eSampledImage;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
+
+    m_device.updateDescriptorSets(1, &write, 0, nullptr);
+    NX_CORE_INFO("[Bindless] Updated Texture Index: {}", index);
+}
+
 void VK_BindlessManager::unregisterTexture(uint32_t index) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (index > 0 || (index == 0 && m_nextTextureIndex > 0)) {
         m_freeTextureIndices.push_back(index);
         NX_CORE_INFO("[Bindless] Unregistered Texture Index: {}", index);
@@ -153,6 +175,7 @@ void VK_BindlessManager::unregisterTexture(uint32_t index) {
 }
 
 void VK_BindlessManager::unregisterSampler(uint32_t index) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (index > 0 || (index == 0 && m_nextSamplerIndex > 0)) {
         m_freeSamplerIndices.push_back(index);
         NX_CORE_INFO("[Bindless] Unregistered Sampler Index: {}", index);
@@ -160,6 +183,7 @@ void VK_BindlessManager::unregisterSampler(uint32_t index) {
 }
 
 void VK_BindlessManager::updateStorageBuffer(vk::Buffer buffer, vk::DeviceSize size) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     vk::DescriptorBufferInfo bufferInfo;
     bufferInfo.buffer = buffer;
     bufferInfo.offset = 0;

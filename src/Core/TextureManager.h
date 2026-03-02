@@ -63,6 +63,10 @@ public:
 
 private:
     IContext* m_context;
+    IRenderer* m_renderer = nullptr;
+public:
+    void setRenderer(IRenderer* renderer) { m_renderer = renderer; }
+private:
     std::mutex m_mutex;
     struct TextureEntry {
         std::unique_ptr<ITexture> texture;
@@ -72,7 +76,7 @@ private:
 
     struct GcEntry {
         std::unique_ptr<ITexture> texture;
-        int framesRemaining;
+        uint64_t targetFrame;
     };
     std::vector<GcEntry> m_gcQueue;
 

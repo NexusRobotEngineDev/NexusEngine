@@ -228,6 +228,7 @@ Status InitializeEngine(const EngineConfig& config) {
 
     NX_CORE_INFO("Main: Initializing TextureManager");
     g_textureManager = std::make_unique<TextureManager>(vkContext);
+    g_textureManager->setRenderer(g_renderer.get());
 #endif
 
     std::string sceneRelPath = g_sceneOverridePath.empty() ? "Data/Scenes/default_scene.json" : g_sceneOverridePath;
@@ -242,7 +243,7 @@ Status InitializeEngine(const EngineConfig& config) {
 
 #if ENABLE_VULKAN
     NX_CORE_INFO("Main: Calling SceneLoader::createEntities");
-    SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
+    (void)SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
 
     NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
     std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
@@ -270,13 +271,32 @@ Status InitializeEngine(const EngineConfig& config) {
         NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
     }
 
-    Entity vsEnt = g_scene->createEntity("VisionSensor");
-    auto& vsCam = vsEnt.addComponent<CameraComponent>();
+    entt::entity vsEnt = entt::null;
+    auto view = g_scene->getRegistry().view<TagComponent>();
+    for (auto e : view) {
+        if (view.get<TagComponent>(e).name == "front_camera" || view.get<TagComponent>(e).name == "front_camera_link") {
+            vsEnt = e;
+            break;
+        }
+    }
+    if (vsEnt == entt::null) {
+        NX_CORE_WARN("Vision Sensor: 'front_camera' entity not found! Creating fallback entity.");
+        Entity fallbackEnt = g_scene->createEntity("VisionSensor");
+        fallbackEnt.addComponent<RigidBodyComponent>("front_camera");
+        vsEnt = (entt::entity)fallbackEnt;
+    }
+
+    if (!g_scene->getRegistry().has<TransformComponent>(vsEnt)) {
+        g_scene->getRegistry().emplace<TransformComponent>(vsEnt);
+    }
+
+    if (!g_scene->getRegistry().has<CameraComponent>(vsEnt)) {
+        g_scene->getRegistry().emplace<CameraComponent>(vsEnt);
+    }
+    auto& vsCam = g_scene->getRegistry().get<CameraComponent>(vsEnt);
     vsCam.fov = 60.0f;
-    auto& vsTr = vsEnt.getComponent<TransformComponent>();
-    vsTr.position = {0.0f, 0.0f, 0.0f};
-    vsEnt.addComponent<RigidBodyComponent>("front_camera");
-    g_renderer->getBridgeRenderer()->setVisionSensorCamera((entt::entity)vsEnt);
+
+    g_renderer->getBridgeRenderer()->setVisionSensorCamera(vsEnt);
 
 #else
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
@@ -397,7 +417,8 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
 
         bool isVisionSensor = false;
         if (registry.has<TagComponent>(entity)) {
-            if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+            std::string name = registry.get<TagComponent>(entity).name;
+            if (name == "VisionSensor" || name == "front_camera" || name == "front_camera_link") {
                 isVisionSensor = true;
             }
         }
@@ -462,13 +483,6 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             right[0]*fwd[1] - right[1]*fwd[0]
         };
 
-        if (isVisionSensor) {
-            float old_r[3] = { right[0], right[1], right[2] };
-            float old_u[3] = { up[0], up[1], up[2] };
-            right[0] = old_u[0]; right[1] = old_u[1]; right[2] = old_u[2];
-            up[0] = -old_r[0];   up[1] = -old_r[1];   up[2] = -old_r[2];
-        }
-
         std::array<float, 16> view = {
             right[0], up[0], -fwd[0], 0.0f,
             right[1], up[1], -fwd[1], 0.0f,
@@ -517,18 +531,8 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         if (!currentVb || !currentIb) continue;
 
         ObjectData obj = {};
-        if (mesh.albedoTexture < 1000) {
-            obj.textureIndex = mesh.albedoTexture;
-        } else {
-            obj.textureIndex = 0;
-        }
-
-        if (mesh.samplerIndex < 1000) {
-            obj.samplerIndex = mesh.samplerIndex;
-        } else {
-            obj.samplerIndex = 0;
-        }
-
+        obj.textureIndex = mesh.albedoTexture;
+        obj.samplerIndex = mesh.samplerIndex;
         obj.albedoFactor = mesh.albedoFactor;
         obj.metallicFactor = mesh.metallicFactor;
         obj.roughnessFactor = mesh.roughnessFactor;
@@ -651,7 +655,8 @@ void RunMainLoop() {
 
             for (auto entity : view) {
                 if (registry.has<TagComponent>(entity)) {
-                    if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+                    std::string name = registry.get<TagComponent>(entity).name;
+                    if (name == "VisionSensor" || name == "front_camera" || name == "front_camera_link") {
                         continue;
                     }
                 }
@@ -867,7 +872,10 @@ int main(int argc, char* argv[]) {
     std::string sceneArg;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--no-validation") {
+        if (arg == "--validation") {
+            config.enableValidationLayers = true;
+            config.forceValidation = true;
+        } else if (arg == "--no-validation") {
             config.enableValidationLayers = false;
         } else if (arg == "--scene" && i + 1 < argc) {
             sceneArg = argv[++i];

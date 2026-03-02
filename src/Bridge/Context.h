@@ -49,6 +49,7 @@ namespace Nexus {
 
 struct EngineConfig {
     bool enableValidationLayers = true;
+    bool forceValidation = false;
 };
 
 ContextPtr CreateContext(const EngineConfig& config = EngineConfig{});

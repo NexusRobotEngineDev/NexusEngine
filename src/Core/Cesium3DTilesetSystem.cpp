@@ -44,6 +44,10 @@ void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, T
 }
 
 void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
+    if (g_prepareRes) {
+        g_prepareRes->pumpDeferredDeletion();
+    }
+
     auto cameraView = registry.view<CameraComponent, TransformComponent>();
 
     struct CameraState {
@@ -62,7 +66,8 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
 
         bool isVisionSensor = false;
         if (registry.has<TagComponent>(entity)) {
-            if (registry.get<TagComponent>(entity).name == "VisionSensor") {
+            std::string name = registry.get<TagComponent>(entity).name;
+            if (name == "VisionSensor" || name == "front_camera" || name == "front_camera_link") {
                 isVisionSensor = true;
             }
         }

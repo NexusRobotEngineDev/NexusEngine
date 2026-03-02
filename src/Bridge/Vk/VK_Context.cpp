@@ -2,6 +2,7 @@
 #include "VK_Buffer.h"
 #include "VK_Renderer.h"
 #include "VK_Texture.h"
+#include "VK_TextureUploader.h"
 #include "Config.h"
 #include "Log.h"
 #include <iostream>
@@ -14,10 +15,15 @@
 
 namespace Nexus {
 
-VK_Context::VK_Context(bool enableValidation) : m_instance(nullptr), m_surface(nullptr), m_debugMessenger(nullptr), m_physicalDevice(nullptr), m_device(nullptr), m_graphicsQueue(nullptr), m_enableValidationLayers(enableValidation) {
+VK_Context::VK_Context(bool enableValidation, bool forceValidation) : m_instance(nullptr), m_surface(nullptr), m_debugMessenger(nullptr), m_physicalDevice(nullptr), m_device(nullptr), m_graphicsQueue(nullptr), m_enableValidationLayers(enableValidation) {
 #ifdef NDEBUG
-    m_enableValidationLayers = false;
+    if (!forceValidation) {
+        m_enableValidationLayers = false;
+    }
 #endif
+    if (m_enableValidationLayers) {
+        NX_CORE_INFO("Vulkan Validation Layers: ENABLED (force={})", forceValidation);
+    }
 }
 
 VK_Context::~VK_Context() {
@@ -43,6 +49,10 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
 
     m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
     NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
+
+    m_uploader = std::make_unique<VK_TextureUploader>(this);
+
+    m_globalVertexBuffer = new VK_Buffer(this);
 
     return OkStatus();
 }
@@ -77,6 +87,7 @@ void VK_Context::sync() {
 
 void VK_Context::shutdown() {
     if (m_device) {
+        m_uploader.reset();
         if (m_bindlessManager) {
             m_bindlessManager.reset();
         }
@@ -235,18 +246,22 @@ Status VK_Context::selectPhysicalDevice() {
 Status VK_Context::createLogicalDevice() {
     auto queueFamilies = m_physicalDevice.getQueueFamilyProperties();
     int graphicsFamily = -1;
+    uint32_t availableQueueCount = 0;
     for (int i = 0; i < static_cast<int>(queueFamilies.size()); i++) {
         if (queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics) {
             graphicsFamily = i;
+            availableQueueCount = queueFamilies[i].queueCount;
             break;
         }
     }
 
     if (graphicsFamily == -1) return InternalError("Graphics queue family not found");
+    m_graphicsQueueFamilyIndex = graphicsFamily;
 
-    float queuePriority = 1.0f;
-    vk::DeviceQueueCreateInfo queueCreateInfo({}, graphicsFamily, 1, &queuePriority);
-
+    m_hasDedicatedTransferQueue = (availableQueueCount >= 2);
+    uint32_t reqQueueCount = m_hasDedicatedTransferQueue ? 2 : 1;
+    std::vector<float> queuePriorities(reqQueueCount, 1.0f);
+    vk::DeviceQueueCreateInfo queueCreateInfo({}, graphicsFamily, reqQueueCount, queuePriorities.data());
     vk::PhysicalDeviceVulkan13Features features13{};
     features13.dynamicRendering = VK_TRUE;
 
@@ -322,10 +337,10 @@ Status VK_Context::createLogicalDevice() {
         return InternalError("Failed to create logical device");
     }
     m_device = result.value;
-    m_graphicsQueueFamilyIndex = static_cast<uint32_t>(graphicsFamily);
     m_graphicsQueue = m_device.getQueue(m_graphicsQueueFamilyIndex, 0);
+    m_transferQueue = m_device.getQueue(m_graphicsQueueFamilyIndex, m_hasDedicatedTransferQueue ? 1 : 0);
 
-    NX_CORE_INFO("Vulkan Logical Device created successfully (Graphics Family: {})", graphicsFamily);
+    NX_CORE_INFO("Vulkan Logical Device created successfully (Graphics Family: {}), Transfer Queue Dedicated: {}", graphicsFamily, m_hasDedicatedTransferQueue);
     return OkStatus();
 }
 
@@ -355,6 +370,7 @@ std::unique_ptr<ITexture> VK_Context::createTexture(uint32_t width, uint32_t hei
     return tex;
 }
 vk::CommandBuffer VK_Context::beginSingleTimeCommands() {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
     vk::CommandBufferAllocateInfo allocInfo(m_commandPool, vk::CommandBufferLevel::ePrimary, 1);
     vk::CommandBuffer commandBuffer = m_device.allocateCommandBuffers(allocInfo).value[0];
 
@@ -381,7 +397,10 @@ void VK_Context::endSingleTimeCommands(vk::CommandBuffer commandBuffer) {
     (void)m_device.waitForFences(1, &fence, VK_TRUE, UINT64_MAX);
     m_device.destroyFence(fence);
 
-    m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+    }
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -389,7 +408,13 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData) {
-    NX_CORE_WARN("Vulkan Validation: {}", pCallbackData->pMessage);
+    if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        NX_CORE_ERROR("[Vulkan Validation] {}", pCallbackData->pMessage);
+    } else if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        NX_CORE_WARN("[Vulkan Validation] {}", pCallbackData->pMessage);
+    } else {
+        NX_CORE_INFO("[Vulkan Validation] {}", pCallbackData->pMessage);
+    }
     return VK_FALSE;
 }
 
@@ -397,9 +422,10 @@ void VK_Context::setupDebugMessenger() {
     if (!m_enableValidationLayers) return;
 
     vk::DebugUtilsMessengerCreateInfoEXT createInfo;
-    createInfo.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+    createInfo.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
     createInfo.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
     createInfo.pfnUserCallback = reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(debugCallback);
+    NX_CORE_INFO("Vulkan Debug Messenger 已创建");
 
     auto func = (PFN_vkCreateDebugUtilsMessengerEXT)m_instance.getProcAddr("vkCreateDebugUtilsMessengerEXT");
     if (func != nullptr) {

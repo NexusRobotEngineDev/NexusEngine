@@ -114,7 +114,14 @@ Status VK_RmlUi_Renderer::createPipeline(uint32_t width, uint32_t height) {
     pipelineRenderingCreateInfo.pColorAttachmentFormats = &colorAttachmentFormatNative;
     pipelineRenderingCreateInfo.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
 
-    vk::GraphicsPipelineCreateInfo pipelineInfo({}, 2, shaderStages, &vertexInputInfo, &inputAssembly, nullptr, &viewportState, &rasterizer, &multisampling, nullptr, &colorBlending, &dynamicState, m_pipelineLayout);
+    vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
+    depthStencilState.depthTestEnable = VK_TRUE;
+    depthStencilState.depthWriteEnable = VK_FALSE;
+    depthStencilState.depthCompareOp = vk::CompareOp::eAlways;
+    depthStencilState.depthBoundsTestEnable = VK_FALSE;
+    depthStencilState.stencilTestEnable = VK_FALSE;
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo({}, 2, shaderStages, &vertexInputInfo, &inputAssembly, nullptr, &viewportState, &rasterizer, &multisampling, &depthStencilState, &colorBlending, &dynamicState, m_pipelineLayout);
     pipelineInfo.pNext = &pipelineRenderingCreateInfo;
 
     auto pipelineResult = device.createGraphicsPipeline(nullptr, pipelineInfo);

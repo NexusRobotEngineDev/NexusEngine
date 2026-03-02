@@ -5,6 +5,7 @@
 #include <CesiumGltf/Model.h>
 #include <glm/glm.hpp>
 #include <mutex>
+#include <deque>
 #include <entt/entt.hpp>
 
 namespace Nexus {
@@ -67,6 +68,7 @@ public:
         void* pMainThreadResult) noexcept override;
 
     void setEcefToLocalYUp(const glm::dmat4& ecefToLocalYUp);
+    void pumpDeferredDeletion();
 
 private:
     Scene* m_scene;
@@ -78,6 +80,13 @@ private:
 
     entt::entity m_cesiumRootEntity = entt::null;
     void ensureCesiumRootEntity();
+
+    static constexpr int DEFERRED_FRAMES = 4;
+    struct DeferredDelete {
+        int framesRemaining;
+        CesiumTileRenderResources* resources;
+    };
+    std::deque<DeferredDelete> m_deferredDeletions;
 };
 
 } // namespace Nexus

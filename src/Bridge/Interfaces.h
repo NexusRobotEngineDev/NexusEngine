@@ -142,6 +142,7 @@ public:
     virtual uint32_t acquireNextImage() = 0;
     virtual void present(uint32_t imageIndex) = 0;
     virtual void shutdown() = 0;
+    virtual uint64_t getFrameCount() const = 0;
 };
 
 } // namespace Nexus

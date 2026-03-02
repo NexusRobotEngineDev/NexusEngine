@@ -124,6 +124,9 @@ private:
     bool m_offscreenReady = false;
 public:
     std::atomic<uint32_t> m_selectedEntityId{0xFFFFFFFF};
+    uint64_t getFrameCount() const { return m_absoluteFrameCount.load(); }
+private:
+    std::atomic<uint64_t> m_absoluteFrameCount{0};
 };
 
 } // namespace Nexus
