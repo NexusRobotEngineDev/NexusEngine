@@ -175,6 +175,12 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
     std::vector<uint8_t> responseData;
     uint16_t statusCode = 0;
 
+    std::string headerStr = "";
+    for (const auto& header : headers) {
+        headerStr += " [" + header.first + ": " + header.second + "]";
+    }
+    NX_LOG_INFO("CesiumAssetAccessor: executeRequest url={} headers_count={} headers={}", url, headers.size(), headerStr);
+
     if (url.find("file://") == 0 || (url.find("http") != 0 && url.find("https") != 0)) {
         std::string localPath = url;
         if (url.find("file://") == 0) {
@@ -200,52 +206,92 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
         cleanHeaders.reserve(headers.size());
 
         for (const auto& h : headers) {
-            if (h.first == "X-Cesium-Cache-Key") {
+            std::string key = h.first;
+            std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+            if (key == "x-cesium-cache-key") {
                 cacheKey = h.second;
             } else {
                 cleanHeaders.push_back(h);
             }
         }
 
-        bool isJson = (url.find(".json") != std::string::npos);
+        bool isJson = (url.find(".json") != std::string::npos) || (url.find("endpoint") != std::string::npos);
 
         std::string cacheFilePath;
         if (!m_cachePath.empty()) {
+            std::string cleanUrl = url;
+            size_t protoPos = cleanUrl.find("://");
+            if (protoPos != std::string::npos) {
+                cleanUrl = cleanUrl.substr(protoPos + 3);
+            }
+            size_t queryPos = cleanUrl.find('?');
+            if (queryPos != std::string::npos) {
+                cleanUrl = cleanUrl.substr(0, queryPos);
+            }
+
             std::string extension = "bin";
-            auto lastDot = url.find_last_of('.');
-            auto lastQuery = url.find_last_of('?');
+
+            std::string subDirStr;
+            std::string fileStr;
+            size_t fileSlash = cleanUrl.find_last_of('/');
+            if (fileSlash != std::string::npos) {
+                subDirStr = cleanUrl.substr(0, fileSlash);
+                fileStr = cleanUrl.substr(fileSlash + 1);
+            } else {
+                fileStr = cleanUrl;
+            }
+
+            auto lastDot = fileStr.find_last_of('.');
             if (lastDot != std::string::npos) {
-                if (lastQuery != std::string::npos && lastQuery > lastDot) {
-                    extension = url.substr(lastDot + 1, lastQuery - lastDot - 1);
+                extension = fileStr.substr(lastDot + 1);
+            }
+
+
+            std::replace(subDirStr.begin(), subDirStr.end(), ':', '_');
+
+            std::filesystem::path dirPath = std::filesystem::path(m_cachePath);
+            if (!subDirStr.empty()) {
+                dirPath /= subDirStr;
+            }
+
+            if (!cacheKey.empty()) {
+                size_t bboxHash = std::hash<std::string>{}(cacheKey);
+                cacheFilePath = (dirPath / ("bbox_" + std::to_string(bboxHash) + "." + extension)).string();
+            } else {
+                if (fileStr.empty() || fileStr == "unknown" || fileStr.find("endpoint") != std::string::npos) {
+                    cacheFilePath = (dirPath / ("url_" + std::to_string(std::hash<std::string>{}(cleanUrl)) + "." + extension)).string();
                 } else {
-                    extension = url.substr(lastDot + 1);
+                    cacheFilePath = (dirPath / fileStr).string();
                 }
             }
 
-            std::filesystem::path dirPath = std::filesystem::path(m_cachePath);
-            if (!cacheKey.empty()) {
-                cacheFilePath = (dirPath / ("bbox_" + cacheKey + "." + extension)).string();
+            NX_LOG_INFO("DEBUG Cache path for URL {}: {}", url, cacheFilePath);
+            if (std::filesystem::exists(cacheFilePath)) {
+                NX_LOG_INFO("DEBUG File EXISTS: {}", cacheFilePath);
             } else {
-                cacheFilePath = (dirPath / ("url_" + std::to_string(std::hash<std::string>{}(url)) + "." + extension)).string();
+                NX_LOG_WARN("DEBUG File does NOT exist: {}", cacheFilePath);
             }
         }
 
         bool loadedFromCache = false;
-        if (!cacheFilePath.empty() && !isJson && std::filesystem::exists(cacheFilePath)) {
-            auto fileStatus = Nexus::ResourceLoader::loadBinaryFile(cacheFilePath);
-            if (fileStatus.ok()) {
-                responseData = std::move(fileStatus.value());
-                statusCode = 200;
-                loadedFromCache = true;
 
-                if (url.find(".glb") != std::string::npos || url.find(".gltf") != std::string::npos) {
-                    contentType = "model/gltf-binary";
-                } else if (url.find(".b3dm") != std::string::npos) {
-                    contentType = "application/octet-stream";
-                } else if (isJson) {
-                    contentType = "application/json";
+        if (!cacheFilePath.empty() && std::filesystem::exists(cacheFilePath)) {
+            if (m_offlineMode || (!isJson)) {
+                auto fileStatus = Nexus::ResourceLoader::loadBinaryFile(cacheFilePath);
+                if (fileStatus.ok()) {
+                    responseData = std::move(fileStatus.value());
+                    statusCode = 200;
+                    loadedFromCache = true;
+
+                    if (url.find(".glb") != std::string::npos || url.find(".gltf") != std::string::npos) {
+                        contentType = "model/gltf-binary";
+                    } else if (url.find(".b3dm") != std::string::npos) {
+                        contentType = "application/octet-stream";
+                    } else if (isJson) {
+                        contentType = "application/json";
+                    }
+                    responseHeaders["Content-Type"] = contentType;
                 }
-                responseHeaders["Content-Type"] = contentType;
             }
         }
 

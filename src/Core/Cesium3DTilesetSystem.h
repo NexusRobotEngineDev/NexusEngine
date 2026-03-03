@@ -18,7 +18,7 @@ class TextureManager;
  */
 class Cesium3DTilesetSystem {
 public:
-    static void initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath = "");
+    static void initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath = "", bool onlineMode = false);
 
     /**
      * @brief 定期更新视野并拉取最新可见的瓦片列表

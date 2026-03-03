@@ -184,7 +184,7 @@ void ProcessEventSync(const SDL_Event& sdlEvent) {
     }
 }
 
-Status InitializeEngine(const EngineConfig& config) {
+Status InitializeEngine(const EngineConfig& config, bool onlineMode) {
     g_ecsRegistry = std::make_unique<Registry>();
 
     auto entity = g_ecsRegistry->create();
@@ -247,7 +247,7 @@ Status InitializeEngine(const EngineConfig& config) {
 
     NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
     std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
-    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), cesiumCachePath);
+    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), cesiumCachePath, onlineMode);
 
     NX_CORE_INFO("Main: Creating Cesium Test Entity");
     Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
@@ -870,6 +870,7 @@ int main(int argc, char* argv[]) {
 
     EngineConfig config;
     std::string sceneArg;
+    bool onlineMode = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--validation") {
@@ -877,6 +878,8 @@ int main(int argc, char* argv[]) {
             config.forceValidation = true;
         } else if (arg == "--no-validation") {
             config.enableValidationLayers = false;
+        } else if (arg == "--online") {
+            onlineMode = true;
         } else if (arg == "--scene" && i + 1 < argc) {
             sceneArg = argv[++i];
         }
@@ -913,7 +916,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (auto status = InitializeEngine(config); !status.ok()) {
+    if (auto status = InitializeEngine(config, onlineMode); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());
         return -1;
     }

@@ -18,6 +18,7 @@ def patch_file(filepath, tag):
 #include <CesiumGeometry/BoundingSphere.h>
 #include <CesiumGeometry/OrientedBoundingBox.h>
 #include <CesiumGeospatial/BoundingRegion.h>
+#include <CesiumGeospatial/BoundingRegionWithLooseFittingHeights.h>
 #include <CesiumGeospatial/S2CellBoundingVolume.h>
 
 namespace {
@@ -40,8 +41,16 @@ std::string computeBoundingVolumeHash(const Cesium3DTilesSelection::BoundingVolu
                               halfAxes[2].x, halfAxes[2].y, halfAxes[2].z);
         }
         void operator()(const CesiumGeospatial::BoundingRegion& region) {
-            const auto& rectangle = region.getBoundingRegion().getRectangle();
+            const auto& rectangle = region.getRectangle();
             key = fmt::format("region_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}",
+                              rectangle.getWest(), rectangle.getSouth(),
+                              rectangle.getEast(), rectangle.getNorth(),
+                              region.getMinimumHeight(),
+                              region.getMaximumHeight());
+        }
+        void operator()(const CesiumGeospatial::BoundingRegionWithLooseFittingHeights& region) {
+            const auto& rectangle = region.getBoundingRegion().getRectangle();
+            key = fmt::format("region_loose_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}",
                               rectangle.getWest(), rectangle.getSouth(),
                               rectangle.getEast(), rectangle.getNorth(),
                               region.getBoundingRegion().getMinimumHeight(),
@@ -51,18 +60,6 @@ std::string computeBoundingVolumeHash(const Cesium3DTilesSelection::BoundingVolu
             key = fmt::format("s2_{}_{:.8f}_{:.8f}",
                               s2.getCellID().getID(),
                               s2.getMinimumHeight(), s2.getMaximumHeight());
-        }
-        void operator()(const CesiumGeometry::BoundingCylinderRegion& cylinder) {
-            const auto& translation = cylinder.getTranslation();
-            const auto& rotation = cylinder.getRotation();
-            const auto& radial = cylinder.getRadialBounds();
-            const auto& angular = cylinder.getAngularBounds();
-            key = fmt::format("cylinder_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}_{:.8f}",
-                              translation.x, translation.y, translation.z,
-                              rotation.x, rotation.y, rotation.z, rotation.w,
-                              radial.x, radial.y,
-                              cylinder.getHeight(),
-                              angular.x, angular.y);
         }
     };
     std::visit(Operation{key}, boundingVolume);

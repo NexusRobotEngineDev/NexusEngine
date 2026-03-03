@@ -69,6 +69,7 @@ public:
     explicit CesiumAssetAccessor(const std::string& proxyHost = "", int proxyPort = -1);
 
     void setCachePath(const std::string& path) { m_cachePath = path; }
+    void setOfflineMode(bool offline) { m_offlineMode = offline; }
 
     ~CesiumAssetAccessor() override = default;
 
@@ -90,6 +91,7 @@ private:
     std::string m_proxyHost;
     int m_proxyPort;
     std::string m_cachePath;
+    bool m_offlineMode = true;
 
     std::shared_ptr<CesiumAsync::IAssetRequest> executeRequest(
         const std::string& verb,

@@ -30,7 +30,7 @@ static TextureManager* g_tilesetTextureManager = nullptr;
 static std::shared_ptr<CesiumAsync::IAssetAccessor> g_assetAccessor = nullptr;
 static std::shared_ptr<CesiumPrepareRendererResources> g_prepareRes = nullptr;
 
-void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath) {
+void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath, bool onlineMode) {
     g_tilesetScene = scene;
     g_tilesetContext = context;
     g_tilesetTextureManager = textureManager;
@@ -38,6 +38,7 @@ void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, T
     if (!cachePath.empty()) {
         accessor->setCachePath(cachePath);
     }
+    accessor->setOfflineMode(!onlineMode);
     g_assetAccessor = accessor;
 
     Cesium3DTilesContent::registerAllTileContentTypes();

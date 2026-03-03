@@ -61,7 +61,8 @@ public:
 } // namespace
 
 StatusOr<std::string> ResourceLoader::loadTextFile(const std::string& path) {
-    std::string fullPath = s_basePath + path;
+    std::filesystem::path p(path);
+    std::string fullPath = p.is_absolute() ? path : (s_basePath + path);
     std::ifstream file(fullPath);
     if (!file.is_open()) {
         return NotFoundError("Failed to open text file: " + fullPath);
@@ -72,7 +73,8 @@ StatusOr<std::string> ResourceLoader::loadTextFile(const std::string& path) {
 }
 
 StatusOr<std::vector<uint8_t>> ResourceLoader::loadBinaryFile(const std::string& path) {
-    std::string fullPath = s_basePath + path;
+    std::filesystem::path p(path);
+    std::string fullPath = p.is_absolute() ? path : (s_basePath + path);
     std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         return NotFoundError("Failed to open binary file: " + fullPath);
