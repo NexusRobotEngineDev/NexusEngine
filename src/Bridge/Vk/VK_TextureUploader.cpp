@@ -35,6 +35,7 @@ VK_TextureUploader::~VK_TextureUploader() {
 }
 
 void VK_TextureUploader::queueUpload(VK_Texture* targetTexture, const ImageData& data) {
+    targetTexture->setUploading(true);
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_tasks.push({targetTexture, data});
@@ -59,6 +60,11 @@ void VK_TextureUploader::threadLoop() {
 
         auto* tex = task.targetTexture;
         const auto& data = task.data;
+
+        struct UploadGuard {
+            VK_Texture* t;
+            ~UploadGuard() { if (t) t->setUploading(false); }
+        } guard{tex};
 
         vk::BufferCreateInfo stagingBufferInfo({}, data.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive);
         auto stagingResult = device.createBuffer(stagingBufferInfo);

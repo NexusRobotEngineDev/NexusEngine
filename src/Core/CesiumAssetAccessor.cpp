@@ -264,13 +264,6 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
                     cacheFilePath = (dirPath / fileStr).string();
                 }
             }
-
-            NX_LOG_INFO("DEBUG Cache path for URL {}: {}", url, cacheFilePath);
-            if (std::filesystem::exists(cacheFilePath)) {
-                NX_LOG_INFO("DEBUG File EXISTS: {}", cacheFilePath);
-            } else {
-                NX_LOG_WARN("DEBUG File does NOT exist: {}", cacheFilePath);
-            }
         }
 
         bool loadedFromCache = false;

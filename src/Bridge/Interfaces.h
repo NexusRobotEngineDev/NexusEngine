@@ -122,6 +122,8 @@ public:
     virtual TextureFormat getFormat() const = 0;
     virtual uint32_t getBindlessTextureIndex() const { return 0; }
     virtual uint32_t getBindlessSamplerIndex() const { return 0; }
+    virtual bool isUploading() const { return false; }
+    virtual void setUploading(bool uploading) {}
 };
 
 class Registry;
