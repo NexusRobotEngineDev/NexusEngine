@@ -175,12 +175,6 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
     std::vector<uint8_t> responseData;
     uint16_t statusCode = 0;
 
-    std::string headerStr = "";
-    for (const auto& header : headers) {
-        headerStr += " [" + header.first + ": " + header.second + "]";
-    }
-    NX_LOG_INFO("CesiumAssetAccessor: executeRequest url={} headers_count={} headers={}", url, headers.size(), headerStr);
-
     if (url.find("file://") == 0 || (url.find("http") != 0 && url.find("https") != 0)) {
         std::string localPath = url;
         if (url.find("file://") == 0) {

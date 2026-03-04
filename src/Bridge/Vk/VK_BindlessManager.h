@@ -34,8 +34,8 @@ public:
     vk::DescriptorSetLayout getLayout() const { return m_layout; }
     vk::DescriptorSet getSet() const { return m_set; }
 
-    static constexpr uint32_t MAX_TEXTURES = 8192;
-    static constexpr uint32_t MAX_SAMPLERS = 8192;
+    static constexpr uint32_t MAX_TEXTURES = 65536;
+    static constexpr uint32_t MAX_SAMPLERS = 65536;
 
     void updateStorageBuffer(vk::Buffer buffer, vk::DeviceSize size);
 

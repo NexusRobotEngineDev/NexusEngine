@@ -243,7 +243,6 @@ void traverseNodes(const CesiumGltf::Model& model, int32_t nodeIdx, const glm::d
             parsePrimitive(model, prim, pp, globalTransform, modelInstanceId);
             pp.nodeTransform = globalTransform;
             if (!pp.vertices.empty()) {
-                NX_CORE_INFO("[CesiumLoadThread] Mesh#{} parsed: verts={}, indices={}", meshIdx, pp.vertices.size()/8, pp.indices.size());
                 tile.primitives.push_back(std::move(pp));
             }
             meshIdx++;
@@ -345,7 +344,6 @@ CesiumAsync::Future<Cesium3DTilesSelection::TileLoadResultAndRenderResources> Ce
             traverseNodes(*pModel, ni, glm::dmat4(1.0), *pParsedTile, meshIdx, modelInstanceId);
         }
     }
-    NX_CORE_INFO("[CesiumLoadThread] Total primitives parsed for tile: {}", pParsedTile->primitives.size());
 
     return asyncSystem.createResolvedFuture(Cesium3DTilesSelection::TileLoadResultAndRenderResources{
         std::move(tileLoadResult), pParsedTile
@@ -371,8 +369,6 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         return nullptr;
     }
 
-    NX_CORE_INFO("[CesiumMainThread] prepareInMainThread: {} primitives to upload", pParsedTile->primitives.size());
-
     glm::dmat4 ecefToLocal;
     {
         std::lock_guard<std::mutex> lock(m_transformMutex);
@@ -381,6 +377,9 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
 
     auto pRenderResources = new CesiumTileRenderResources();
     pRenderResources->tileTransform = pParsedTile->tileTransform;
+
+    auto tStart = std::chrono::high_resolution_clock::now();
+    double timeTex = 0, timeVerts = 0, timeBuffers = 0;
 
     std::unordered_map<std::string, ITexture*> loadedTextures;
     for (auto& img : pParsedTile->images) {
@@ -393,7 +392,11 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         }
     }
 
+    auto tTexDone = std::chrono::high_resolution_clock::now();
+    timeTex = std::chrono::duration<double, std::milli>(tTexDone - tStart).count();
+
     for (size_t pi = 0; pi < pParsedTile->primitives.size(); ++pi) {
+        auto tTexLoopStart = std::chrono::high_resolution_clock::now();
         auto& prim = pParsedTile->primitives[pi];
         CesiumPrimitiveRenderData renderData;
         renderData.indexCount = static_cast<uint32_t>(prim.indices.size());
@@ -419,6 +422,9 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             }
         }
 
+        auto tVertsStart = std::chrono::high_resolution_clock::now();
+        timeTex += std::chrono::duration<double, std::milli>(tVertsStart - tTexLoopStart).count();
+
         size_t vertCount = prim.vertices.size() / 8;
         glm::dmat4 combined = ecefToLocal * pParsedTile->tileTransform * prim.nodeTransform;
         for (size_t vi = 0; vi < vertCount; vi++) {
@@ -440,6 +446,11 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             prim.vertices[vi * 8 + 7] = static_cast<float>(localNorm.z);
         }
 
+        auto tVertsDone = std::chrono::high_resolution_clock::now();
+        timeVerts += std::chrono::duration<double, std::milli>(tVertsDone - tVertsStart).count();
+
+        auto tBuffStart = std::chrono::high_resolution_clock::now();
+
         size_t vSize = prim.vertices.size() * sizeof(float);
         size_t iSize = prim.indices.size() * sizeof(uint32_t);
 
@@ -451,6 +462,8 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             renderData.indexBuffer = m_context->createBuffer(iSize, 0x0042, 0x0006);
             (void)renderData.indexBuffer->uploadData(prim.indices.data(), iSize, 0);
         }
+        auto tBuffDone = std::chrono::high_resolution_clock::now();
+        timeBuffers += std::chrono::duration<double, std::milli>(tBuffDone - tBuffStart).count();
 
         pRenderResources->primitives.push_back(std::move(renderData));
 
@@ -478,22 +491,15 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         ensureCesiumRootEntity();
         Entity rootEntity(m_cesiumRootEntity, &m_scene->getRegistry());
         m_scene->setParent(ent, rootEntity);
-
-        if (pi == 0 && vertCount > 0) {
-            NX_CORE_INFO("[CesiumMainThread] First verts after ECEF->Local transform:");
-            for (size_t vi2 = 0; vi2 < std::min(vertCount, (size_t)3); vi2++) {
-                NX_CORE_INFO("  v[{}] = ({:.2f}, {:.2f}, {:.2f})", vi2,
-                    prim.vertices[vi2*8+0], prim.vertices[vi2*8+1], prim.vertices[vi2*8+2]);
-            }
-        }
-
-        NX_CORE_INFO("[CesiumMainThread] Primitive#{}: entity={}, vb={}, ib={}, indexCount={}",
-            pi, (uint32_t)ent.getHandle(),
-            (void*)mesh.vertexBuffer, (void*)mesh.indexBuffer, mesh.indexCount);
     }
 
-    NX_CORE_INFO("[CesiumMainThread] Tile fully prepared: {} entities created, renderRes={}",
-        pRenderResources->entities.size(), (void*)pRenderResources);
+    auto tTotalDone = std::chrono::high_resolution_clock::now();
+    double timeTotal = std::chrono::duration<double, std::milli>(tTotalDone - tStart).count();
+
+    if (timeTotal > 1.0) {
+        NX_CORE_INFO("[CesiumMainThread_Profile] Tile {} prims: Total={:.2f}ms (Tex={:.2f}ms, VertTransform={:.2f}ms, VulkanBufferCreate&Upload={:.2f}ms)",
+            pParsedTile->primitives.size(), timeTotal, timeTex, timeVerts, timeBuffers);
+    }
 
     delete pParsedTile;
     return pRenderResources;
@@ -510,8 +516,6 @@ void CesiumPrepareRendererResources::free(
 
     if (pMainThreadResult) {
         auto pRenderResources = static_cast<CesiumTileRenderResources*>(pMainThreadResult);
-        NX_CORE_WARN("[CesiumFree] Freeing tile: {} entities, renderRes={}",
-            pRenderResources->entities.size(), (void*)pRenderResources);
         for (auto e : pRenderResources->entities) {
             if (m_scene->getRegistry().has<CesiumGltfComponent>(e)) {
                 m_scene->destroyEntity(Entity(e, &m_scene->getRegistry()));

@@ -111,8 +111,6 @@ uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
     write.pImageInfo = &imageInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
-    NX_CORE_INFO("[Bindless] Registered Texture View: {}, Index: {}", (void*)view, index);
-
     return index;
 }
 
@@ -142,8 +140,6 @@ uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
     write.pImageInfo = &samplerInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
-    NX_CORE_INFO("[Bindless] Registered Sampler: {}, Index: {}", (void*)sampler, index);
-
     return index;
 }
 
@@ -163,14 +159,12 @@ void VK_BindlessManager::updateTexture(uint32_t index, vk::ImageView newView) {
     write.pImageInfo = &imageInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
-    NX_CORE_INFO("[Bindless] Updated Texture Index: {}", index);
 }
 
 void VK_BindlessManager::unregisterTexture(uint32_t index) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (index > 0 || (index == 0 && m_nextTextureIndex > 0)) {
         m_freeTextureIndices.push_back(index);
-        NX_CORE_INFO("[Bindless] Unregistered Texture Index: {}", index);
     }
 }
 
@@ -178,7 +172,6 @@ void VK_BindlessManager::unregisterSampler(uint32_t index) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (index > 0 || (index == 0 && m_nextSamplerIndex > 0)) {
         m_freeSamplerIndices.push_back(index);
-        NX_CORE_INFO("[Bindless] Unregistered Sampler Index: {}", index);
     }
 }
 

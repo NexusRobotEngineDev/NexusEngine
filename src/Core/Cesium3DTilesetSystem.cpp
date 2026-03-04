@@ -147,6 +147,10 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
             };
 
             Cesium3DTilesSelection::TilesetOptions options;
+            options.maximumCachedBytes = 4ULL * 1024 * 1024 * 1024;
+            options.maximumSimultaneousTileLoads = 64;
+            options.preloadAncestors = true;
+            options.preloadSiblings = true;
 
             if (!tilesetComponent.m_url.empty()) {
                 tilesetComponent.m_tileset = std::make_unique<Cesium3DTilesSelection::Tileset>(

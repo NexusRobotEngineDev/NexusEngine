@@ -38,12 +38,9 @@ ITexture* TextureManager::getOrCreateTexture(const std::string& path) {
         auto it = m_textures.find(path);
         if (it != m_textures.end()) {
             it->second.refCount++;
-            NX_CORE_INFO("[TextureDebug] Cache Hit: {} (Ref: {})", path, it->second.refCount);
             return it->second.texture.get();
         }
     }
-
-    NX_CORE_INFO("[TextureDebug] Cache Miss: {}", path);
 
     auto imgRes = ResourceLoader::loadImage(path);
     if (!imgRes.ok()) {
@@ -73,12 +70,9 @@ ITexture* TextureManager::createTextureFromMemory(const std::string& key, const 
         auto it = m_textures.find(key);
         if (it != m_textures.end()) {
             it->second.refCount++;
-            NX_CORE_INFO("[TextureDebug] Cache Hit for Memory Texture: {} (Ref: {})", key, it->second.refCount);
             return it->second.texture.get();
         }
     }
-
-    NX_CORE_INFO("[TextureDebug] Cache Miss for Memory Texture: {}", key);
 
     auto texture = m_context->createTexture(data, TextureUsage::Sampled);
     if (!texture) return nullptr;
