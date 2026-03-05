@@ -50,6 +50,27 @@ Status VK_Context::initializeWindowSurface(void* windowNativeHandle) {
     m_bindlessManager = std::make_unique<VK_BindlessManager>(m_device);
     NX_RETURN_IF_ERROR(m_bindlessManager->initialize());
 
+    vk::SamplerCreateInfo samplerInfo;
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = vk::CompareOp::eAlways;
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+
+    auto samplerResult = m_device.createSampler(samplerInfo);
+    if (samplerResult.result == vk::Result::eSuccess) {
+        m_globalSampler = samplerResult.value;
+        m_globalSamplerCreated = true;
+        m_globalSamplerIndex = m_bindlessManager->registerSampler(m_globalSampler);
+    }
+
     m_uploader = std::make_unique<VK_TextureUploader>(this);
 
     m_globalVertexBuffer = new VK_Buffer(this);
@@ -87,6 +108,10 @@ void VK_Context::sync() {
 
 void VK_Context::shutdown() {
     if (m_device) {
+        if (m_globalSamplerCreated) {
+            m_device.destroySampler(m_globalSampler);
+            m_globalSamplerCreated = false;
+        }
         m_uploader.reset();
         if (m_bindlessManager) {
             m_bindlessManager.reset();

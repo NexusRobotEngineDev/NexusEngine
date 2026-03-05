@@ -16,6 +16,7 @@ struct IContext;
 namespace Core {
     class TextureManager;
     class Registry;
+    class MeshManager;
 }
 
 /**
@@ -24,7 +25,7 @@ namespace Core {
  */
 class CesiumPrepareRendererResources : public Cesium3DTilesSelection::IPrepareRendererResources {
 public:
-    CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager);
+    CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager, Core::MeshManager* meshManager = nullptr);
     ~CesiumPrepareRendererResources() override;
 
     CesiumAsync::Future<Cesium3DTilesSelection::TileLoadResultAndRenderResources> prepareInLoadThread(
@@ -74,6 +75,7 @@ private:
     Scene* m_scene;
     IContext* m_context;
     Core::TextureManager* m_textureManager;
+    Core::MeshManager* m_meshManager;
 
     std::mutex m_transformMutex;
     glm::dmat4 m_ecefToLocalYUp = glm::dmat4(1.0);

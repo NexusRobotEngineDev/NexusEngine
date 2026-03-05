@@ -27,13 +27,15 @@ namespace Core {
 static Scene* g_tilesetScene = nullptr;
 static Nexus::IContext* g_tilesetContext = nullptr;
 static TextureManager* g_tilesetTextureManager = nullptr;
+static Core::MeshManager* g_tilesetMeshManager = nullptr;
 static std::shared_ptr<CesiumAsync::IAssetAccessor> g_assetAccessor = nullptr;
 static std::shared_ptr<CesiumPrepareRendererResources> g_prepareRes = nullptr;
 
-void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, const std::string& cachePath, bool onlineMode) {
+void Cesium3DTilesetSystem::initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, Core::MeshManager* meshManager, const std::string& cachePath, bool onlineMode) {
     g_tilesetScene = scene;
     g_tilesetContext = context;
     g_tilesetTextureManager = textureManager;
+    g_tilesetMeshManager = meshManager;
     auto accessor = std::make_shared<CesiumAssetAccessor>();
     if (!cachePath.empty()) {
         accessor->setCachePath(cachePath);
@@ -136,7 +138,7 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
 
             NX_CORE_INFO("Cesium3DTilesetSystem: Initializing Tileset...");
 
-            g_prepareRes = std::make_shared<CesiumPrepareRendererResources>(g_tilesetScene, g_tilesetContext, g_tilesetTextureManager);
+            g_prepareRes = std::make_shared<CesiumPrepareRendererResources>(g_tilesetScene, g_tilesetContext, g_tilesetTextureManager, g_tilesetMeshManager);
 
             Cesium3DTilesSelection::TilesetExternals externals{
                 g_assetAccessor,

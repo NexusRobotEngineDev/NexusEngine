@@ -4,6 +4,8 @@
 #include "Scene.h"
 #include "Components.h"
 #include "CesiumComponents.h"
+#include "RenderSystem.h"
+#include "MeshManager.h"
 #include "../Bridge/Log.h"
 
 #include <CesiumAsync/AsyncSystem.h>
@@ -255,8 +257,8 @@ void traverseNodes(const CesiumGltf::Model& model, int32_t nodeIdx, const glm::d
 
 } // namespace
 
-CesiumPrepareRendererResources::CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager)
-    : m_scene(scene), m_context(context), m_textureManager(textureManager) {}
+CesiumPrepareRendererResources::CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager, Core::MeshManager* meshManager)
+    : m_scene(scene), m_context(context), m_textureManager(textureManager), m_meshManager(meshManager) {}
 
 CesiumPrepareRendererResources::~CesiumPrepareRendererResources() = default;
 
@@ -454,13 +456,19 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         size_t vSize = prim.vertices.size() * sizeof(float);
         size_t iSize = prim.indices.size() * sizeof(uint32_t);
 
-        if (vSize > 0) {
-            renderData.vertexBuffer = m_context->createBuffer(vSize, 0x0082, 0x0006);
-            (void)renderData.vertexBuffer->uploadData(prim.vertices.data(), vSize, 0);
-        }
-        if (iSize > 0) {
-            renderData.indexBuffer = m_context->createBuffer(iSize, 0x0042, 0x0006);
-            (void)renderData.indexBuffer->uploadData(prim.indices.data(), iSize, 0);
+        uint32_t vOffset = 0, iOffset = 0;
+        if (vSize > 0 || iSize > 0) {
+            if (m_meshManager) {
+                auto status = m_meshManager->addMesh(prim.vertices, prim.indices, vOffset, iOffset);
+                if (!status.ok()) {
+                    NX_CORE_ERROR("Failed to allocate mesh space from MeshManager: {}", status.message());
+                } else {
+                    renderData.vertexBuffer = nullptr;
+                    renderData.indexBuffer = nullptr;
+                    renderData.vertexOffset = vOffset;
+                    renderData.indexOffset = iOffset;
+                }
+            }
         }
         auto tBuffDone = std::chrono::high_resolution_clock::now();
         timeBuffers += std::chrono::duration<double, std::milli>(tBuffDone - tBuffStart).count();
@@ -472,6 +480,8 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         auto& mesh = ent.addComponent<MeshComponent>();
         mesh.vertexBuffer = pRenderResources->primitives.back().vertexBuffer.get();
         mesh.indexBuffer = pRenderResources->primitives.back().indexBuffer.get();
+        mesh.vertexOffset = pRenderResources->primitives.back().vertexOffset;
+        mesh.indexOffset = pRenderResources->primitives.back().indexOffset;
         mesh.indexCount = pRenderResources->primitives.back().indexCount;
         mesh.albedoFactor = pRenderResources->primitives.back().baseColorFactor;
         mesh.albedoTexture = pRenderResources->primitives.back().albedoTexture;
@@ -535,7 +545,15 @@ void CesiumPrepareRendererResources::pumpDeferredDeletion() {
         d.framesRemaining--;
     }
     while (!m_deferredDeletions.empty() && m_deferredDeletions.front().framesRemaining <= 0) {
-        delete m_deferredDeletions.front().resources;
+        auto* res = m_deferredDeletions.front().resources;
+        if (m_meshManager) {
+            for (const auto& prim : res->primitives) {
+                if (prim.indexCount > 0) {
+                    m_meshManager->removeMesh(prim.vertexOffset, prim.indexOffset);
+                }
+            }
+        }
+        delete res;
         m_deferredDeletions.pop_front();
     }
 }

@@ -151,26 +151,8 @@ Status VK_Texture::createDepth(uint32_t width, uint32_t height, vk::Format forma
 }
 
 Status VK_Texture::createSampler() {
-    vk::SamplerCreateInfo samplerInfo;
-    samplerInfo.magFilter = vk::Filter::eLinear;
-    samplerInfo.minFilter = vk::Filter::eLinear;
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = vk::CompareOp::eAlways;
-    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
-
-    auto samplerResult = m_context->getDevice().createSampler(samplerInfo);
-    if (samplerResult.result != vk::Result::eSuccess) return InternalError("Failed to create sampler");
-    m_sampler = samplerResult.value;
-
-    m_bindlessSamplerIndex = m_context->getBindlessManager()->registerSampler(m_sampler);
-
+    m_sampler = nullptr;
+    m_bindlessSamplerIndex = m_context->getGlobalSamplerBindlessIndex();
     return OkStatus();
 }
 

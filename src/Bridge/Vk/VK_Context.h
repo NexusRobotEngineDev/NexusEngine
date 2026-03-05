@@ -112,6 +112,14 @@ private:
     IBuffer* m_globalVertexBuffer = nullptr;
     IBuffer* m_globalIndexBuffer = nullptr;
 
+    vk::Sampler m_globalSampler;
+    uint32_t m_globalSamplerIndex = 0xFFFFFFFF;
+    bool m_globalSamplerCreated = false;
+public:
+    inline vk::Sampler getGlobalSampler() const { return m_globalSampler; }
+    inline uint32_t getGlobalSamplerBindlessIndex() const { return m_globalSamplerIndex; }
+private:
+
     const std::vector<const char*> m_validationLayers = {
         "VK_LAYER_KHRONOS_validation"
     };

@@ -17,6 +17,8 @@ namespace Nexus {
 struct CesiumPrimitiveRenderData {
     std::unique_ptr<IBuffer> vertexBuffer;
     std::unique_ptr<IBuffer> indexBuffer;
+    uint32_t vertexOffset = 0;
+    uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
     std::string baseColorTextureKey;
 
