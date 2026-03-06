@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include "Base.h"
 #include "VK_Context.h"
 #include "VK_Swapchain.h"
@@ -84,6 +85,7 @@ private:
     Status createSyncObjects();
     Status createOffscreenResources();
     void uploadSnapshotData(RenderSnapshot* snapshot);
+    void recordComputeCulling(vk::CommandBuffer commandBuffer);
     void recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot);
     void recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, RenderSnapshot* snapshot);
 
@@ -144,9 +146,15 @@ public:
     void updatePersistentSlot(uint32_t slot, const ObjectData& obj, const DrawIndexedIndirectCommand& cmd);
     void setPersistentSlotVisibility(uint32_t slot, bool visible);
 
+    void lockPersistentData() { m_slotMutex.lock(); }
+    void unlockPersistentData() { m_slotMutex.unlock(); }
+
 private:
-    std::mutex m_slotMutex;
+    std::recursive_mutex m_slotMutex;
     std::vector<uint32_t> m_freeSlots;
+
+    std::vector<ObjectData> m_localObjectData;
+    std::vector<DrawIndexedIndirectCommand> m_localIndirectCommands;
 
     std::atomic<uint64_t> m_absoluteFrameCount{0};
 };
