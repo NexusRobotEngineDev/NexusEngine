@@ -247,7 +247,7 @@ Status InitializeEngine(const EngineConfig& config, bool onlineMode) {
 
     NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
     std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
-    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), static_cast<Core::RenderSystem*>(g_renderer.get())->getMeshManager(), cesiumCachePath, onlineMode);
+    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), static_cast<Core::RenderSystem*>(g_renderer.get()), cesiumCachePath, onlineMode);
 
     NX_CORE_INFO("Main: Creating Cesium Test Entity");
     Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
@@ -504,11 +504,6 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
 
     auto meshView = registry.view<MeshComponent, TransformComponent>();
 
-    std::map<std::pair<IBuffer*, IBuffer*>, size_t> batchMap;
-
-    IBuffer* globalVb = g_context->getGlobalVertexBuffer();
-    IBuffer* globalIb = g_context->getGlobalIndexBuffer();
-
     uint32_t selectedId = 0xFFFFFFFF;
 #if ENABLE_VULKAN
     if (g_renderer) {
@@ -520,15 +515,16 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         auto& mesh = meshView.get<MeshComponent>(entity);
         auto& transform = meshView.get<TransformComponent>(entity);
 
-        if (transform.worldMatrix[0] == 0.0f && transform.worldMatrix[5] == 0.0f && transform.worldMatrix[10] == 0.0f) {
+        if (registry.has<CesiumGltfComponent>(entity)) {
             continue;
         }
 
-        std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
+        auto bridge = g_renderer ? g_renderer->getBridgeRenderer() : nullptr;
+        if (!bridge) continue;
 
-        IBuffer* currentVb = mesh.vertexBuffer ? mesh.vertexBuffer : globalVb;
-        IBuffer* currentIb = mesh.indexBuffer ? mesh.indexBuffer : globalIb;
-        if (!currentVb || !currentIb) continue;
+        if (mesh.persistentSlot == 0xFFFFFFFF) {
+            mesh.persistentSlot = bridge->allocatePersistentSlot();
+        }
 
         ObjectData obj = {};
         obj.textureIndex = mesh.albedoTexture;
@@ -536,7 +532,7 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         obj.albedoFactor = mesh.albedoFactor;
         obj.metallicFactor = mesh.metallicFactor;
         obj.roughnessFactor = mesh.roughnessFactor;
-        obj.mvp = mvp;
+        obj.isVisible = 1;
         obj.worldMatrix = transform.worldMatrix;
 
         bool isSelected = ((uint32_t)entity == selectedId);
@@ -546,32 +542,20 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
         }
 
-        uint32_t entityIdx = (uint32_t)snapshot->frameObjects.size();
-        snapshot->frameObjects.push_back(obj);
-
         DrawIndexedIndirectCommand cmd;
         cmd.indexCount = mesh.indexCount;
         cmd.instanceCount = 1;
         cmd.firstIndex = mesh.indexOffset;
         cmd.vertexOffset = mesh.vertexOffset;
-        cmd.firstInstance = entityIdx;
+        cmd.firstInstance = mesh.persistentSlot;
 
-        RenderDrawBatch* targetBatch = nullptr;
-        auto key = std::make_pair(currentVb, currentIb);
-        auto it = batchMap.find(key);
-        if (it != batchMap.end()) {
-            targetBatch = &snapshot->batches[it->second];
-        } else {
-            size_t newIdx = snapshot->batches.size();
-            snapshot->batches.push_back({currentVb, currentIb, {}});
-            targetBatch = &snapshot->batches.back();
-            batchMap[key] = newIdx;
-        }
-        targetBatch->commands.push_back(cmd);
+        bridge->updatePersistentSlot(mesh.persistentSlot, obj, cmd);
 
         snapshot->totalTriangles += mesh.indexCount / 3;
         snapshot->meshCount++;
     }
+
+    snapshot->mainCameraViewProj = viewProj;
 }
 
 void RunMainLoop() {

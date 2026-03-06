@@ -19,6 +19,8 @@ struct ObjectData {
     uint occlusionIndex;
     uint emissiveIndex;
     uint samplerIndex;
+    uint isVisible;
+    uint _pad0;
 
     float4 albedoFactor;
     float metallicFactor;
@@ -26,7 +28,7 @@ struct ObjectData {
     float2 padding;
 
     float4x4 mvp;
-    float4x4 normalMatrix;
+    float4x4 worldMatrix;
     float4 highlightColor;
 };
 
@@ -53,13 +55,13 @@ PSInput VSMain(VSInput input, uint instanceID : SV_InstanceID) {
     uint objIndex = pushParams.frameOffset + instanceID;
 
     if (pushParams.useCustomVP != 0) {
-        output.Pos = mul(pushParams.customViewProj, mul(objects[objIndex].normalMatrix, float4(input.Pos, 1.0)));
+        output.Pos = mul(pushParams.customViewProj, mul(objects[objIndex].worldMatrix, float4(input.Pos, 1.0)));
     } else {
-        output.Pos = mul(objects[objIndex].mvp, float4(input.Pos, 1.0));
+        output.Pos = mul(pushParams.customViewProj, mul(objects[objIndex].worldMatrix, float4(input.Pos, 1.0)));
     }
 
     output.WorldPos = input.Pos;
-    output.Normal = normalize(mul((float3x3)objects[objIndex].normalMatrix, input.Normal));
+    output.Normal = normalize(mul((float3x3)objects[objIndex].worldMatrix, input.Normal));
     output.UV = input.UV;
     output.InstanceID = objIndex;
     return output;

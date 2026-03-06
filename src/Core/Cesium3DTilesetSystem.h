@@ -12,6 +12,7 @@ namespace Core {
 
 class TextureManager;
 class MeshManager;
+class RenderSystem;
 
 /**
  * @brief Cesium 3D Tileset 调度与视图更新系统
@@ -19,7 +20,7 @@ class MeshManager;
  */
 class Cesium3DTilesetSystem {
 public:
-    static void initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, Core::MeshManager* meshManager = nullptr, const std::string& cachePath = "", bool onlineMode = false);
+    static void initialize(Scene* scene, Nexus::IContext* context, TextureManager* textureManager, Core::RenderSystem* renderSystem = nullptr, const std::string& cachePath = "", bool onlineMode = false);
 
     /**
      * @brief 定期更新视野并拉取最新可见的瓦片列表

@@ -292,6 +292,7 @@ Status VK_Context::createLogicalDevice() {
 
     vk::PhysicalDeviceVulkan12Features features12{};
     features12.pNext = &features13;
+    features12.drawIndirectCount = VK_TRUE;
     features12.descriptorIndexing = VK_TRUE;
     features12.runtimeDescriptorArray = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
@@ -344,10 +345,14 @@ Status VK_Context::createLogicalDevice() {
     deviceFeatures.samplerAnisotropy = VK_TRUE;
 
     vk::DeviceCreateInfo createInfo;
-    createInfo.pNext = m_meshShaderSupported ? &meshFeatures : (void*)&features12;
+    vk::PhysicalDeviceFeatures2 features2{};
+    features2.features = deviceFeatures;
+    features2.pNext = m_meshShaderSupported ? (void*)&meshFeatures : (void*)&features12;
+
+    createInfo.pNext = &features2;
+    createInfo.pEnabledFeatures = nullptr;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
-    createInfo.pEnabledFeatures = &deviceFeatures;
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 

@@ -7,6 +7,8 @@
 #include "RenderSystem.h"
 #include "MeshManager.h"
 #include "../Bridge/Log.h"
+#include "../Bridge/RenderProxy.h"
+#include "../Bridge/Vk/VK_Renderer.h"
 
 #include <CesiumAsync/AsyncSystem.h>
 #include <CesiumGltf/AccessorView.h>
@@ -257,8 +259,8 @@ void traverseNodes(const CesiumGltf::Model& model, int32_t nodeIdx, const glm::d
 
 } // namespace
 
-CesiumPrepareRendererResources::CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager, Core::MeshManager* meshManager)
-    : m_scene(scene), m_context(context), m_textureManager(textureManager), m_meshManager(meshManager) {}
+CesiumPrepareRendererResources::CesiumPrepareRendererResources(Scene* scene, Nexus::IContext* context, Core::TextureManager* textureManager, Core::RenderSystem* renderSys)
+    : m_scene(scene), m_context(context), m_textureManager(textureManager), m_renderSystem(renderSys) {}
 
 CesiumPrepareRendererResources::~CesiumPrepareRendererResources() = default;
 
@@ -458,8 +460,8 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
 
         uint32_t vOffset = 0, iOffset = 0;
         if (vSize > 0 || iSize > 0) {
-            if (m_meshManager) {
-                auto status = m_meshManager->addMesh(prim.vertices, prim.indices, vOffset, iOffset);
+            if (m_renderSystem && m_renderSystem->getMeshManager()) {
+                auto status = m_renderSystem->getMeshManager()->addMesh(prim.vertices, prim.indices, vOffset, iOffset);
                 if (!status.ok()) {
                     NX_CORE_ERROR("Failed to allocate mesh space from MeshManager: {}", status.message());
                 } else {
@@ -496,6 +498,30 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             trans.worldMatrix[14] = 9999999.0f;
         }
 
+        auto bridge = m_renderSystem ? m_renderSystem->getBridgeRenderer() : nullptr;
+        if (bridge) {
+            mesh.persistentSlot = bridge->allocatePersistentSlot();
+
+            ObjectData obj = {};
+            obj.textureIndex = mesh.albedoTexture;
+            obj.samplerIndex = mesh.samplerIndex;
+            obj.albedoFactor = mesh.albedoFactor;
+            obj.metallicFactor = mesh.metallicFactor;
+            obj.roughnessFactor = mesh.roughnessFactor;
+            obj.isVisible = 0;
+            obj.worldMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
+
+            DrawIndexedIndirectCommand cmd = {};
+            cmd.indexCount = mesh.indexCount;
+            cmd.instanceCount = 1;
+            cmd.firstIndex = mesh.indexOffset;
+            cmd.vertexOffset = mesh.vertexOffset;
+            cmd.firstInstance = mesh.persistentSlot;
+
+            bridge->updatePersistentSlot(mesh.persistentSlot, obj, cmd);
+        }
+
         pRenderResources->entities.push_back(ent.getHandle());
 
         ensureCesiumRootEntity();
@@ -526,11 +552,6 @@ void CesiumPrepareRendererResources::free(
 
     if (pMainThreadResult) {
         auto pRenderResources = static_cast<CesiumTileRenderResources*>(pMainThreadResult);
-        for (auto e : pRenderResources->entities) {
-            if (m_scene->getRegistry().has<CesiumGltfComponent>(e)) {
-                m_scene->destroyEntity(Entity(e, &m_scene->getRegistry()));
-            }
-        }
         for (const auto& key : pRenderResources->textureKeys) {
             if (m_textureManager) {
                 m_textureManager->removeTexture(key);
@@ -546,13 +567,28 @@ void CesiumPrepareRendererResources::pumpDeferredDeletion() {
     }
     while (!m_deferredDeletions.empty() && m_deferredDeletions.front().framesRemaining <= 0) {
         auto* res = m_deferredDeletions.front().resources;
-        if (m_meshManager) {
+        if (m_renderSystem && m_renderSystem->getMeshManager()) {
             for (const auto& prim : res->primitives) {
                 if (prim.indexCount > 0) {
-                    m_meshManager->removeMesh(prim.vertexOffset, prim.indexOffset);
+                    m_renderSystem->getMeshManager()->removeMesh(prim.vertexOffset, prim.indexOffset);
                 }
             }
         }
+
+        auto bridge = m_renderSystem ? m_renderSystem->getBridgeRenderer() : nullptr;
+        for (auto e : res->entities) {
+            if (m_scene->getRegistry().valid(e) && m_scene->getRegistry().has<MeshComponent>(e)) {
+                auto& mesh = m_scene->getRegistry().get<MeshComponent>(e);
+                if (bridge && mesh.persistentSlot != 0xFFFFFFFF) {
+                    bridge->freePersistentSlot(mesh.persistentSlot);
+                }
+            }
+            if (m_scene->getRegistry().valid(e)) {
+                m_scene->destroyEntity(Entity(e, &m_scene->getRegistry()));
+            }
+        }
+        res->entities.clear();
+
         delete res;
         m_deferredDeletions.pop_front();
     }

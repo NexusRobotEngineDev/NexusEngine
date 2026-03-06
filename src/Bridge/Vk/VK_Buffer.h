@@ -29,6 +29,7 @@ private:
     vk::Buffer m_buffer;
     vk::DeviceMemory m_memory;
     vk::DeviceSize m_size = 0;
+    void* m_mappedData = nullptr;
 };
 
 } // namespace Nexus

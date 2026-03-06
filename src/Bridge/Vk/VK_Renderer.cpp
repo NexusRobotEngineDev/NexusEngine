@@ -68,6 +68,8 @@ Status VK_Renderer::initialize() {
     if (auto status = createCommandPool(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 2: createGraphicsPipeline");
     if (auto status = createGraphicsPipeline(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 2.5: createComputePipeline");
+    if (auto status = createComputePipeline(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
@@ -103,17 +105,51 @@ Status VK_Renderer::initialize() {
 
     NX_CORE_INFO("VK_Renderer::initialize - 7: alloc indirect buffers");
     m_indirectBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    size_t objCap = 100000;
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         m_indirectBuffers[i] = std::make_unique<VK_IndirectBuffer>(m_context);
+        NX_RETURN_IF_ERROR(m_indirectBuffers[i]->create(objCap * sizeof(DrawIndexedIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal));
     }
 
     NX_CORE_INFO("VK_Renderer::initialize - 8: alloc objectDataBuffer");
     m_objectDataBuffer = std::make_unique<VK_Buffer>(m_context);
-    size_t objCap = 100000;
     NX_RETURN_IF_ERROR(m_objectDataBuffer->create(MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    m_persistentCommandBuffer = std::make_unique<VK_Buffer>(m_context);
+    NX_RETURN_IF_ERROR(m_persistentCommandBuffer->create(MAX_FRAMES_IN_FLIGHT * objCap * sizeof(DrawIndexedIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+
+    m_countBuffer = std::make_unique<VK_Buffer>(m_context);
+    NX_RETURN_IF_ERROR(m_countBuffer->create(MAX_FRAMES_IN_FLIGHT * sizeof(uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndirectBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal));
 
     NX_CORE_INFO("VK_Renderer::initialize - 9: updateStorageBuffer in BindlessManager");
     m_context->getBindlessManager()->updateStorageBuffer(m_objectDataBuffer->getHandle(), MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData));
+
+    NX_CORE_INFO("VK_Renderer::initialize - 9.1: Update Cull Descriptor Sets");
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vk::DescriptorBufferInfo inCmdInfo(m_persistentCommandBuffer->getHandle(), i * objCap * sizeof(DrawIndexedIndirectCommand), objCap * sizeof(DrawIndexedIndirectCommand));
+        vk::DescriptorBufferInfo outCmdInfo(m_indirectBuffers[i]->getHandle(), 0, objCap * sizeof(DrawIndexedIndirectCommand));
+        vk::DescriptorBufferInfo countInfo(m_countBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+
+        std::array<vk::WriteDescriptorSet, 3> writes{};
+        writes[0].dstSet = m_cullDescriptorSets[i];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo = &inCmdInfo;
+
+        writes[1].dstSet = m_cullDescriptorSets[i];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[1].descriptorCount = 1;
+        writes[1].pBufferInfo = &outCmdInfo;
+
+        writes[2].dstSet = m_cullDescriptorSets[i];
+        writes[2].dstBinding = 2;
+        writes[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[2].descriptorCount = 1;
+        writes[2].pBufferInfo = &countInfo;
+
+        m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
 
     NX_CORE_INFO("VK_Renderer::initialize - 10: RML UI Init");
 #ifdef ENABLE_RMLUI
@@ -158,6 +194,49 @@ Status VK_Renderer::createOffscreenResources() {
 ITexture* VK_Renderer::getSwapchainTexture(uint32_t index) {
     if (index >= m_swapchainTextures.size()) return nullptr;
     return m_swapchainTextures[index].get();
+}
+
+uint32_t VK_Renderer::allocatePersistentSlot() {
+    std::lock_guard<std::mutex> lock(m_slotMutex);
+    if (!m_freeSlots.empty()) {
+        uint32_t slot = m_freeSlots.back();
+        m_freeSlots.pop_back();
+        return slot;
+    }
+    uint32_t nextSlot = m_maxEntityIndex.fetch_add(1, std::memory_order_relaxed);
+    return nextSlot;
+}
+
+void VK_Renderer::freePersistentSlot(uint32_t slot) {
+    ObjectData emptyObj = {};
+    emptyObj.isVisible = 0;
+    DrawIndexedIndirectCommand emptyCmd = {};
+    updatePersistentSlot(slot, emptyObj, emptyCmd);
+
+    std::lock_guard<std::mutex> lock(m_slotMutex);
+    m_freeSlots.push_back(slot);
+}
+
+void VK_Renderer::updatePersistentSlot(uint32_t slot, const ObjectData& obj, const DrawIndexedIndirectCommand& cmd) {
+    if (!m_objectDataBuffer || !m_persistentCommandBuffer) return;
+    size_t objCap = 100000;
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        size_t objOffset = (i * objCap + slot) * sizeof(ObjectData);
+        size_t cmdOffset = (i * objCap + slot) * sizeof(DrawIndexedIndirectCommand);
+
+        m_objectDataBuffer->uploadData(&obj, sizeof(ObjectData), objOffset);
+        m_persistentCommandBuffer->uploadData(&cmd, sizeof(DrawIndexedIndirectCommand), cmdOffset);
+    }
+}
+
+void VK_Renderer::setPersistentSlotVisibility(uint32_t slot, bool visible) {
+    if (!m_objectDataBuffer) return;
+    size_t objCap = 100000;
+    uint32_t isVisible = visible ? 1 : 0;
+    size_t objOffset = (m_currentFrame * objCap + slot) * sizeof(ObjectData);
+    size_t isVisibleOffset = objOffset + offsetof(ObjectData, isVisible);
+    m_objectDataBuffer->uploadData(&isVisible, sizeof(uint32_t), isVisibleOffset);
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
@@ -319,6 +398,83 @@ Status VK_Renderer::createGraphicsPipeline() {
     return OkStatus();
 }
 
+Status VK_Renderer::createComputePipeline() {
+    std::string csCode;
+    NX_ASSIGN_OR_RETURN(csCode, ResourceLoader::loadTextFile("Data/Shaders/Cull.hlsl"));
+
+    vk::ShaderModule compShaderModule;
+    NX_ASSIGN_OR_RETURN(compShaderModule, VK_ShaderCompiler::compileLayer(m_device, csCode, "CSMain", shaderc_compute_shader));
+
+    vk::PipelineShaderStageCreateInfo compShaderStageInfo;
+    compShaderStageInfo.stage = vk::ShaderStageFlagBits::eCompute;
+    compShaderStageInfo.module = compShaderModule;
+    compShaderStageInfo.pName = "CSMain";
+
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(3);
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, static_cast<uint32_t>(bindings.size()), bindings.data());
+
+    auto layoutRes = m_device.createDescriptorSetLayout(layoutInfo);
+    if (layoutRes.result != vk::Result::eSuccess) return InternalError("Failed to create cull descriptor set layout");
+    m_cullSetLayout = layoutRes.value;
+
+    std::vector<vk::DescriptorSetLayout> setLayouts = {
+        m_context->getBindlessManager()->getLayout(),
+        m_cullSetLayout
+    };
+
+    vk::PushConstantRange pushConstantRange;
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(uint32_t) * 3;
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, static_cast<uint32_t>(setLayouts.size()), setLayouts.data(), 1, &pushConstantRange);
+
+    if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_cullPipelineLayout) != vk::Result::eSuccess) {
+        return InternalError("Failed to create compute pipeline layout");
+    }
+
+    vk::ComputePipelineCreateInfo pipelineInfo({}, compShaderStageInfo, m_cullPipelineLayout);
+
+    auto result = m_device.createComputePipeline(nullptr, pipelineInfo);
+    if (result.result != vk::Result::eSuccess) {
+        return InternalError("Failed to create compute pipeline");
+    }
+    m_cullPipeline = result.value;
+
+    m_device.destroyShaderModule(compShaderModule);
+
+    std::vector<vk::DescriptorPoolSize> poolSizes = {
+        { vk::DescriptorType::eStorageBuffer, 3 * MAX_FRAMES_IN_FLIGHT }
+    };
+    vk::DescriptorPoolCreateInfo poolInfo({}, MAX_FRAMES_IN_FLIGHT, static_cast<uint32_t>(poolSizes.size()), poolSizes.data());
+    auto poolRes = m_device.createDescriptorPool(poolInfo);
+    if (poolRes.result != vk::Result::eSuccess) return InternalError("Failed to create cull descriptor pool");
+    m_cullDescriptorPool = poolRes.value;
+
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_cullSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo(m_cullDescriptorPool, static_cast<uint32_t>(layouts.size()), layouts.data());
+    auto allocRes = m_device.allocateDescriptorSets(allocInfo);
+    if (allocRes.result != vk::Result::eSuccess) return InternalError("Failed to allocate cull descriptor sets");
+    m_cullDescriptorSets = allocRes.value;
+
+    return OkStatus();
+}
+
 Status VK_Renderer::createCommandPool() {
     vk::CommandPoolCreateInfo poolInfo;
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -375,6 +531,53 @@ Status VK_Renderer::createSyncObjects() {
 
 void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot) {
     vk::Extent2D extent = m_swapchain->getExtent();
+
+    uint32_t activeEntitiesCount = m_maxEntityIndex.load(std::memory_order_relaxed);
+    if (activeEntitiesCount > 0) {
+        commandBuffer.fillBuffer(m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t), sizeof(uint32_t), 0);
+
+        vk::BufferMemoryBarrier countBarrier;
+        countBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        countBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        countBarrier.buffer = m_countBuffer->getHandle();
+        countBarrier.offset = m_currentFrame * sizeof(uint32_t);
+        countBarrier.size = sizeof(uint32_t);
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eComputeShader, {}, 0, nullptr, 1, &countBarrier, 0, nullptr);
+
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, m_cullPipeline);
+        vk::DescriptorSet cullSets[] = { m_context->getBindlessManager()->getSet(), m_cullDescriptorSets[m_currentFrame] };
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, m_cullPipelineLayout, 0, 2, cullSets, 0, nullptr);
+        struct CullPushParams {
+            uint32_t maxEntities;
+            uint32_t frameIndex;
+            uint32_t frameOffset;
+        };
+        CullPushParams cullParams = {};
+        cullParams.maxEntities = activeEntitiesCount;
+        cullParams.frameIndex = m_currentFrame;
+        cullParams.frameOffset = m_currentFrame * 100000;
+
+        commandBuffer.pushConstants<CullPushParams>(m_cullPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, cullParams);
+
+        commandBuffer.dispatch((activeEntitiesCount + 63) / 64, 1, 1);
+
+        vk::BufferMemoryBarrier indirectBarrier;
+        indirectBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        indirectBarrier.dstAccessMask = vk::AccessFlagBits::eIndirectCommandRead;
+        indirectBarrier.buffer = m_indirectBuffers[m_currentFrame]->getHandle();
+        indirectBarrier.offset = 0;
+        indirectBarrier.size = VK_WHOLE_SIZE;
+
+        vk::BufferMemoryBarrier countReadBarrier;
+        countReadBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        countReadBarrier.dstAccessMask = vk::AccessFlagBits::eIndirectCommandRead;
+        countReadBarrier.buffer = m_countBuffer->getHandle();
+        countReadBarrier.offset = m_currentFrame * sizeof(uint32_t);
+        countReadBarrier.size = sizeof(uint32_t);
+
+        vk::BufferMemoryBarrier cullBarriers[] = { indirectBarrier, countReadBarrier };
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eDrawIndirect, {}, 0, nullptr, 2, cullBarriers, 0, nullptr);
+    }
 
     vk::ImageMemoryBarrier colorBarrier;
     colorBarrier.srcAccessMask = {};
@@ -451,8 +654,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 
         size_t objCap = 100000;
         uint32_t frameOffset = m_currentFrame * objCap;
-
-        if (!snapshot->frameObjects.empty()) {
+        if (activeEntitiesCount > 0) {
             struct PushParams {
                 uint32_t frameOffset;
                 uint32_t useCustomVP;
@@ -461,22 +663,31 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             };
             PushParams params = {};
             params.frameOffset = m_currentFrame * 100000;
-            params.useCustomVP = 0;
+            params.useCustomVP = 1;
+            if (snapshot) {
+                params.customViewProj = snapshot->mainCameraViewProj;
+            } else {
+                params.customViewProj = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            }
 
             vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
             commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
             commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
 
-            uint32_t commandOffset = 0;
-            for (const auto& batch : snapshot->batches) {
-                vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vertexBuffer)->getHandle() };
+            auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+            auto globalIBO = static_cast<VK_Buffer*>(m_context->getGlobalIndexBuffer());
+
+            if (globalVBO && globalIBO) {
+                vk::Buffer vertexBuffers[] = { globalVBO->getHandle() };
                 vk::DeviceSize offsets[] = { 0 };
                 commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-                commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.indexBuffer)->getHandle(), 0, vk::IndexType::eUint32);
+                commandBuffer.bindIndexBuffer(globalIBO->getHandle(), 0, vk::IndexType::eUint32);
 
-                commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
-
-                commandOffset += (uint32_t)batch.commands.size();
+                commandBuffer.drawIndexedIndirectCount(
+                    m_indirectBuffers[m_currentFrame]->getHandle(), 0,
+                    m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t),
+                    activeEntitiesCount, sizeof(DrawIndexedIndirectCommand)
+                );
             }
         }
 
@@ -604,14 +815,23 @@ void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, 
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
     commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
 
-    uint32_t commandOffset = 0;
-    for (const auto& batch : snapshot->batches) {
-        vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(batch.vertexBuffer)->getHandle() };
-        vk::DeviceSize offsets[] = { 0 };
-        commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-        commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(batch.indexBuffer)->getHandle(), 0, vk::IndexType::eUint32);
-        commandBuffer.drawIndexedIndirect(m_indirectBuffers[m_currentFrame]->getHandle(), commandOffset * sizeof(DrawIndexedIndirectCommand), (uint32_t)batch.commands.size(), sizeof(DrawIndexedIndirectCommand));
-        commandOffset += (uint32_t)batch.commands.size();
+    uint32_t activeEntitiesCount = m_maxEntityIndex.load(std::memory_order_relaxed);
+    if (activeEntitiesCount > 0) {
+        auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+        auto globalIBO = static_cast<VK_Buffer*>(m_context->getGlobalIndexBuffer());
+
+        if (globalVBO && globalIBO) {
+            vk::Buffer vertexBuffers[] = { globalVBO->getHandle() };
+            vk::DeviceSize offsets[] = { 0 };
+            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+            commandBuffer.bindIndexBuffer(globalIBO->getHandle(), 0, vk::IndexType::eUint32);
+
+            commandBuffer.drawIndexedIndirectCount(
+                m_indirectBuffers[m_currentFrame]->getHandle(), 0,
+                m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t),
+                activeEntitiesCount, sizeof(DrawIndexedIndirectCommand)
+            );
+        }
     }
 
     commandBuffer.endRendering();

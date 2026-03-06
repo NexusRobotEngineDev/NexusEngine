@@ -138,6 +138,8 @@ struct MeshComponent {
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
 
+    uint32_t persistentSlot = 0xFFFFFFFF;
+
     uint32_t albedoTexture = 0;
     uint32_t normalTexture = 0;
     uint32_t metallicRoughnessTexture = 0;
