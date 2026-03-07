@@ -184,7 +184,7 @@ void ProcessEventSync(const SDL_Event& sdlEvent) {
     }
 }
 
-Status InitializeEngine(const EngineConfig& config, bool onlineMode) {
+Status InitializeEngine(const EngineConfig& config, bool onlineMode, bool disableSensors) {
     g_ecsRegistry = std::make_unique<Registry>();
 
     auto entity = g_ecsRegistry->create();
@@ -271,32 +271,34 @@ Status InitializeEngine(const EngineConfig& config, bool onlineMode) {
         NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
     }
 
-    entt::entity vsEnt = entt::null;
-    auto view = g_scene->getRegistry().view<TagComponent>();
-    for (auto e : view) {
-        if (view.get<TagComponent>(e).name == "front_camera" || view.get<TagComponent>(e).name == "front_camera_link") {
-            vsEnt = e;
-            break;
+    if (!disableSensors) {
+        entt::entity vsEnt = entt::null;
+        auto view = g_scene->getRegistry().view<TagComponent>();
+        for (auto e : view) {
+            if (view.get<TagComponent>(e).name == "front_camera" || view.get<TagComponent>(e).name == "front_camera_link") {
+                vsEnt = e;
+                break;
+            }
         }
-    }
-    if (vsEnt == entt::null) {
-        NX_CORE_WARN("Vision Sensor: 'front_camera' entity not found! Creating fallback entity.");
-        Entity fallbackEnt = g_scene->createEntity("VisionSensor");
-        fallbackEnt.addComponent<RigidBodyComponent>("front_camera");
-        vsEnt = (entt::entity)fallbackEnt;
-    }
+        if (vsEnt == entt::null) {
+            NX_CORE_WARN("Vision Sensor: 'front_camera' entity not found! Creating fallback entity.");
+            Entity fallbackEnt = g_scene->createEntity("VisionSensor");
+            fallbackEnt.addComponent<RigidBodyComponent>("front_camera");
+            vsEnt = (entt::entity)fallbackEnt;
+        }
 
-    if (!g_scene->getRegistry().has<TransformComponent>(vsEnt)) {
-        g_scene->getRegistry().emplace<TransformComponent>(vsEnt);
-    }
+        if (!g_scene->getRegistry().has<TransformComponent>(vsEnt)) {
+            g_scene->getRegistry().emplace<TransformComponent>(vsEnt);
+        }
 
-    if (!g_scene->getRegistry().has<CameraComponent>(vsEnt)) {
-        g_scene->getRegistry().emplace<CameraComponent>(vsEnt);
-    }
-    auto& vsCam = g_scene->getRegistry().get<CameraComponent>(vsEnt);
-    vsCam.fov = 60.0f;
+        if (!g_scene->getRegistry().has<CameraComponent>(vsEnt)) {
+            g_scene->getRegistry().emplace<CameraComponent>(vsEnt);
+        }
+        auto& vsCam = g_scene->getRegistry().get<CameraComponent>(vsEnt);
+        vsCam.fov = 60.0f;
 
-    g_renderer->getBridgeRenderer()->setVisionSensorCamera(vsEnt);
+        g_renderer->getBridgeRenderer()->setVisionSensorCamera(vsEnt);
+    }
 
 #else
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
@@ -766,7 +768,6 @@ void RunMainLoop() {
 
             auto syncStartTime = std::chrono::high_resolution_clock::now();
             while (g_rhiThread->getQueueSize() >= 2) {
-                std::this_thread::yield();
             }
             auto syncEndTime = std::chrono::high_resolution_clock::now();
             accumSyncTime += std::chrono::duration<double, std::milli>(syncEndTime - syncStartTime).count();
@@ -842,8 +843,6 @@ void RunMainLoop() {
 #else
         g_context->sync();
 #endif
-
-        std::this_thread::yield();
     }
 }
 } // namespace
@@ -855,6 +854,7 @@ int main(int argc, char* argv[]) {
     EngineConfig config;
     std::string sceneArg;
     bool onlineMode = false;
+    bool disableSensors = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--validation") {
@@ -864,6 +864,8 @@ int main(int argc, char* argv[]) {
             config.enableValidationLayers = false;
         } else if (arg == "--online") {
             onlineMode = true;
+        } else if (arg == "--no-sensors") {
+            disableSensors = true;
         } else if (arg == "--scene" && i + 1 < argc) {
             sceneArg = argv[++i];
         }
@@ -900,7 +902,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (auto status = InitializeEngine(config, onlineMode); !status.ok()) {
+    if (auto status = InitializeEngine(config, onlineMode, disableSensors); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());
         return -1;
     }

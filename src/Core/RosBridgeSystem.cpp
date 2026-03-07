@@ -262,6 +262,11 @@ void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
 void RosBridgeSystem::publishImage(const std::vector<uint8_t>& imagePixels, int width, int height) {
     if (!m_impl->initialized || imagePixels.empty()) return;
 
+    static int imgLog = 0;
+    if (imgLog++ % 100 == 0) {
+        NX_CORE_INFO("RosBridgeSystem::publishImage CALLED! len: {}", imagePixels.size());
+    }
+
     std::string topic = "vision:" + m_impl->robotId;
     std::lock_guard<std::mutex> lock(m_impl->pubMutex);
     m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);

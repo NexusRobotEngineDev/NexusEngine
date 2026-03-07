@@ -750,7 +750,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
 }
 
 void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, RenderSnapshot* snapshot) {
-    if (!snapshot || snapshot->frameObjects.empty()) return;
+    if (!snapshot) return;
 
     m_offscreenReady = false;
 
@@ -895,6 +895,11 @@ void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, 
 
 bool VK_Renderer::getOffscreenPixels(std::vector<uint8_t>& outPixels) {
     if (!m_offscreenReady || !m_offscreenReadbackMapped) return false;
+
+    static int logCnt = 0;
+    if (logCnt++ % 100 == 0) {
+        NX_CORE_INFO("getOffscreenPixels returning true!");
+    }
 
     size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
     outPixels.resize(size);

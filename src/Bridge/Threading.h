@@ -46,7 +46,6 @@ public:
 
     void pushCommand(const RenderCommand& cmd) {
         while (!m_queue.push(cmd)) {
-            std::this_thread::yield();
         }
     }
 
@@ -58,14 +57,12 @@ public:
         m_syncRequested = true;
         pushCommand({RenderCommandType::SyncPoint});
         while (!m_isAtSyncPoint) {
-            std::this_thread::yield();
         }
     }
 
     void resumeSync() {
         m_syncRequested = false;
         while (m_isAtSyncPoint) {
-            std::this_thread::yield();
         }
     }
 
@@ -81,7 +78,6 @@ private:
                 processCommand(cmd);
                 if (cmd.type == RenderCommandType::Shutdown) break;
             } else {
-                std::this_thread::yield();
             }
         }
     }
@@ -117,7 +113,6 @@ private:
                 case RenderCommandType::SyncPoint:
                     m_isAtSyncPoint = true;
                     while (m_syncRequested) {
-                        std::this_thread::yield();
                     }
                     m_isAtSyncPoint = false;
                     break;
@@ -188,7 +183,6 @@ public:
         m_queue.push(cmd);
 
         while (!done) {
-            std::this_thread::yield();
         }
 
         if (resultStatus.ok()) {
@@ -206,7 +200,6 @@ private:
         while (isRunning()) {
             processCommands();
             pumpEvents();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
