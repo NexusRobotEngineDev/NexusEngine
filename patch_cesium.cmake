@@ -85,8 +85,8 @@ endforeach()
 message(STATUS "Patched ${PATCHED_COUNT} cesium-native headers with missing <string> include and patched CMakeLists to avoid spdlog alias install errors.")
 
 execute_process(
-    COMMAND python ${CMAKE_CURRENT_SOURCE_DIR}/patch_cesium_cache.py ${CESIUM_SRC_DIR}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND python ${CMAKE_CURRENT_LIST_DIR}/patch_cesium_cache.py ${CESIUM_SRC_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     RESULT_VARIABLE PATCH_CACHE_RESULT
 )
 if(NOT PATCH_CACHE_RESULT EQUAL 0)
