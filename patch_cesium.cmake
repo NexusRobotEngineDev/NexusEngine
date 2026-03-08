@@ -74,6 +74,8 @@ foreach(CMAKELIST ${SUB_CMAKELISTS})
     
     string(REPLACE "/WX" "" CONTENT "${CONTENT}")
     string(REPLACE "add_compile_options(/WX)" "" CONTENT "${CONTENT}")
+    string(REPLACE "-Werror" "" CONTENT "${CONTENT}")
+    string(REPLACE "add_compile_options(-Werror)" "" CONTENT "${CONTENT}")
     
     if(NOT "${CONTENT}" STREQUAL "${OLD_CONTENT}")
         file(WRITE "${CMAKELIST}" "${CONTENT}")
