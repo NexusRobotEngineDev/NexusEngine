@@ -248,12 +248,32 @@ std::shared_ptr<CesiumAsync::IAssetRequest> CesiumAssetAccessor::executeRequest(
                 dirPath /= subDirStr;
             }
 
+            auto fnv1a_hash = [](const std::string& str) -> uint64_t {
+                uint64_t hash = 14695981039346656037ULL;
+                for (char c : str) {
+                    hash ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
+                    hash *= 1099511628211ULL;
+                }
+                return hash;
+            };
+
             if (!cacheKey.empty()) {
-                size_t bboxHash = std::hash<std::string>{}(cacheKey);
-                cacheFilePath = (dirPath / ("bbox_" + std::to_string(bboxHash) + "." + extension)).string();
+                uint64_t bboxHash = fnv1a_hash(cacheKey);
+                std::string hashFile1 = (dirPath / ("bbox_" + std::to_string(bboxHash) + "." + extension)).string();
+                std::string hashFile2 = (dirPath / ("bbox_" + std::to_string(std::hash<std::string>{}(cacheKey)) + "." + extension)).string();
+                cacheFilePath = hashFile1;
+                if (std::filesystem::exists(hashFile2) && !std::filesystem::exists(hashFile1)) {
+                    cacheFilePath = hashFile2;
+                }
             } else {
                 if (fileStr.empty() || fileStr == "unknown" || fileStr.find("endpoint") != std::string::npos) {
-                    cacheFilePath = (dirPath / ("url_" + std::to_string(std::hash<std::string>{}(cleanUrl)) + "." + extension)).string();
+                    uint64_t urlHash = fnv1a_hash(cleanUrl);
+                    std::string hashFile1 = (dirPath / ("url_" + std::to_string(urlHash) + "." + extension)).string();
+                    std::string hashFile2 = (dirPath / ("url_" + std::to_string(std::hash<std::string>{}(cleanUrl)) + "." + extension)).string();
+                    cacheFilePath = hashFile1;
+                    if (std::filesystem::exists(hashFile2) && !std::filesystem::exists(hashFile1)) {
+                        cacheFilePath = hashFile2;
+                    }
                 } else {
                     cacheFilePath = (dirPath / fileStr).string();
                 }
