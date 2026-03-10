@@ -71,8 +71,8 @@ jobs:
       run: |
         apt-get update
         apt-get install -y software-properties-common gnupg ca-certificates locales wget
-        add-apt-repository ppa:ubuntu-toolchain-r/test -y
-        add-apt-repository ppa:deadsnakes/ppa -y
+        for i in 1 2 3 4 5; do add-apt-repository ppa:ubuntu-toolchain-r/test -y && break || sleep 2; done
+        for i in 1 2 3 4 5; do add-apt-repository ppa:deadsnakes/ppa -y && break || sleep 2; done
         apt-get update
         apt-get upgrade -y
         apt-get install -y \
@@ -175,8 +175,8 @@ jobs:
       run: |
         apt-get update
         apt-get install -y software-properties-common gnupg ca-certificates locales wget
-        add-apt-repository ppa:ubuntu-toolchain-r/test -y
-        add-apt-repository ppa:deadsnakes/ppa -y
+        for i in 1 2 3 4 5; do add-apt-repository ppa:ubuntu-toolchain-r/test -y && break || sleep 2; done
+        for i in 1 2 3 4 5; do add-apt-repository ppa:deadsnakes/ppa -y && break || sleep 2; done
         apt-get update
         apt-get upgrade -y
         apt-get install -y \
