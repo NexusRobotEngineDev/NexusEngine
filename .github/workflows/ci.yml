@@ -60,7 +60,8 @@ jobs:
           libsystemd-dev libcryptsetup-dev libgcrypt20-dev liblzma-dev liblz4-dev libzstd-dev \
           libacl1-dev libkmod-dev libblkid-dev libseccomp-dev libpam0g-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
-        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-13 100 --slave /usr/bin/c++ c++ /usr/bin/g++-13
+        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-13 100
+        update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 100
         python3 -m pip install jinja2
         locale-gen zh_CN.UTF-8
@@ -126,7 +127,8 @@ jobs:
           libsystemd-dev libcryptsetup-dev libgcrypt20-dev liblzma-dev liblz4-dev libzstd-dev \
           libacl1-dev libkmod-dev libblkid-dev libseccomp-dev libpam0g-dev
         update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100 --slave /usr/bin/g++ g++ /usr/bin/g++-13
-        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-13 100 --slave /usr/bin/c++ c++ /usr/bin/g++-13
+        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-13 100
+        update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
         update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 100
         python3 -m pip install jinja2
         locale-gen zh_CN.UTF-8
