@@ -11,5 +11,12 @@
     "urdf": "Models/go2/go2_description.urdf",
     "physics": "Scenes/go2_mujoco/scene.xml"
   },
-  "objects": []
+  "objects": [
+    {
+      "type": "box",
+      "position": [2.0, -23.736, 30.00],
+      "size": [0.3, 0.3, 0.3],
+      "color": [1.0, 0.2, 0.2, 1.0]
+    }
+  ]
 }

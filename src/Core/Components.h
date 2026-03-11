@@ -147,6 +147,12 @@ struct MeshComponent {
     uint32_t emissiveTexture = 0;
     uint32_t samplerIndex = 0;
 
+    std::array<float, 4> boundingSphere = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    uint32_t meshletOffset = 0xFFFFFFFF;
+    uint32_t meshletCount = 0;
+    bool useMeshShader = false;
+
     std::array<float, 4> albedoFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;

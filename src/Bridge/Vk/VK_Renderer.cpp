@@ -4,8 +4,13 @@
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
+#include "../../Core/MeshletBuilder.h"
 
 namespace Nexus {
+
+using Core::MeshletBuilder;
+using Core::MeshletGPUData;
+using Core::MeshletGPUBounds;
 
 std::atomic<uint32_t> g_RenderStats_DrawCalls{0};
 std::atomic<uint32_t> g_RenderStats_Triangles{0};
@@ -92,6 +97,12 @@ Status VK_Renderer::initialize() {
     if (auto status = createGraphicsPipeline(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 2.5: createComputePipeline");
     if (auto status = createComputePipeline(); !status.ok()) return status;
+    if (m_context->isMeshShaderSupported()) {
+        NX_CORE_INFO("VK_Renderer::initialize - 2.6: createMeshletPipeline");
+        if (auto status = createMeshletPipeline(); !status.ok()) {
+            NX_CORE_WARN("Meshlet pipeline creation failed, mesh shader culling disabled: {}", status.message());
+        }
+    }
     NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
@@ -496,6 +507,130 @@ Status VK_Renderer::createComputePipeline() {
     return OkStatus();
 }
 
+Status VK_Renderer::createMeshletPipeline() {
+    std::string hlslCode;
+    NX_ASSIGN_OR_RETURN(hlslCode, ResourceLoader::loadTextFile("Data/Shaders/MeshletCull.hlsl"));
+
+    vk::ShaderModule taskModule;
+    NX_ASSIGN_OR_RETURN(taskModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "ASMain", shaderc_task_shader));
+
+    vk::ShaderModule meshModule;
+    NX_ASSIGN_OR_RETURN(meshModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "MSMain", shaderc_mesh_shader));
+
+    vk::ShaderModule fragModule;
+    NX_ASSIGN_OR_RETURN(fragModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "PSMain", shaderc_fragment_shader));
+
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(5);
+    for (int i = 0; i < 5; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT;
+    }
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, static_cast<uint32_t>(bindings.size()), bindings.data());
+    auto layoutRes = m_device.createDescriptorSetLayout(layoutInfo);
+    if (layoutRes.result != vk::Result::eSuccess) return InternalError("Failed to create meshlet descriptor set layout");
+    m_meshletSetLayout = layoutRes.value;
+
+    std::vector<vk::DescriptorSetLayout> setLayouts = {
+        m_context->getBindlessManager()->getLayout(),
+        m_meshletSetLayout
+    };
+
+    struct MeshletPushParamsCPU {
+        uint32_t meshletOffset;
+        uint32_t meshletCount;
+        uint32_t vertexBufferOffset;
+        uint32_t _pad0;
+        float viewProj[16];
+        float worldMatrix[16];
+        float albedoFactor[4];
+        float cameraPos[3];
+        float _pad1;
+    };
+
+    vk::PushConstantRange pushRange;
+    pushRange.stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(MeshletPushParamsCPU);
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, static_cast<uint32_t>(setLayouts.size()), setLayouts.data(), 1, &pushRange);
+    if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_meshletPipelineLayout) != vk::Result::eSuccess) {
+        return InternalError("Failed to create meshlet pipeline layout");
+    }
+
+    vk::Format colorFormat = m_swapchain->getImageFormat();
+    vk::Format depthFormat = m_swapchain->getDepthFormat();
+    if (depthFormat == vk::Format::eUndefined) depthFormat = vk::Format::eD32Sfloat;
+
+    vk::PipelineRenderingCreateInfo renderingCreateInfo;
+    renderingCreateInfo.colorAttachmentCount = 1;
+    renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
+    renderingCreateInfo.depthAttachmentFormat = depthFormat;
+
+    std::vector<vk::PipelineShaderStageCreateInfo> stages;
+    stages.push_back({{}, vk::ShaderStageFlagBits::eTaskEXT, taskModule, "ASMain"});
+    stages.push_back({{}, vk::ShaderStageFlagBits::eMeshEXT, meshModule, "MSMain"});
+    stages.push_back({{}, vk::ShaderStageFlagBits::eFragment, fragModule, "PSMain"});
+
+    vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);
+    vk::PipelineRasterizationStateCreateInfo rasterizer({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill,
+        vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
+    depthStencilState.depthTestEnable = VK_TRUE;
+    depthStencilState.depthWriteEnable = VK_TRUE;
+    depthStencilState.depthCompareOp = vk::CompareOp::eGreaterOrEqual;
+
+    vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1);
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+    colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    vk::PipelineColorBlendStateCreateInfo colorBlending({}, VK_FALSE, vk::LogicOp::eCopy, 1, &colorBlendAttachment);
+
+    std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+    vk::PipelineDynamicStateCreateInfo dynamicState({}, dynamicStates);
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo;
+    pipelineInfo.pNext = &renderingCreateInfo;
+    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
+    pipelineInfo.pStages = stages.data();
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencilState;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_meshletPipelineLayout;
+
+    auto result = m_device.createGraphicsPipeline(nullptr, pipelineInfo);
+    if (result.result != vk::Result::eSuccess) {
+        return InternalError("Failed to create meshlet graphics pipeline");
+    }
+    m_meshletPipeline = result.value;
+
+    m_device.destroyShaderModule(taskModule);
+    m_device.destroyShaderModule(meshModule);
+    m_device.destroyShaderModule(fragModule);
+
+    std::vector<vk::DescriptorPoolSize> poolSizes = {
+        {vk::DescriptorType::eStorageBuffer, 5}
+    };
+    vk::DescriptorPoolCreateInfo poolInfo({}, 1, static_cast<uint32_t>(poolSizes.size()), poolSizes.data());
+    auto poolRes = m_device.createDescriptorPool(poolInfo);
+    if (poolRes.result != vk::Result::eSuccess) return InternalError("Failed to create meshlet descriptor pool");
+    m_meshletDescriptorPool = poolRes.value;
+
+    vk::DescriptorSetAllocateInfo allocInfo(m_meshletDescriptorPool, 1, &m_meshletSetLayout);
+    auto allocRes = m_device.allocateDescriptorSets(allocInfo);
+    if (allocRes.result != vk::Result::eSuccess) return InternalError("Failed to allocate meshlet descriptor set");
+    m_meshletDescriptorSet = allocRes.value[0];
+
+    NX_CORE_INFO("Meshlet pipeline created successfully");
+    m_meshletPipelineReady = true;
+    return OkStatus();
+}
+
 Status VK_Renderer::createCommandPool() {
     vk::CommandPoolCreateInfo poolInfo;
     poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
@@ -712,6 +847,106 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
                     m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t),
                     activeEntitiesCount, sizeof(DrawIndexedIndirectCommand)
                 );
+            }
+        }
+
+        if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
+            if (MeshletBuilder::isDirty()) {
+                auto& meshlets = MeshletBuilder::getGlobalMeshlets();
+                auto& bounds = MeshletBuilder::getGlobalBounds();
+                auto& verts = MeshletBuilder::getGlobalVertices();
+                auto& tris = MeshletBuilder::getGlobalTriangles();
+
+                if (!meshlets.empty()) {
+                    m_meshletBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletBuffer->create(meshlets.size() * sizeof(MeshletGPUData),
+                        vk::BufferUsageFlagBits::eStorageBuffer,
+                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    m_meshletBuffer->uploadData(meshlets.data(), meshlets.size() * sizeof(MeshletGPUData), 0);
+
+                    m_meshletBoundsBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletBoundsBuffer->create(bounds.size() * sizeof(MeshletGPUBounds),
+                        vk::BufferUsageFlagBits::eStorageBuffer,
+                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    m_meshletBoundsBuffer->uploadData(bounds.data(), bounds.size() * sizeof(MeshletGPUBounds), 0);
+
+                    m_meshletVertexBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletVertexBuffer->create(verts.size() * sizeof(uint32_t),
+                        vk::BufferUsageFlagBits::eStorageBuffer,
+                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    m_meshletVertexBuffer->uploadData(verts.data(), verts.size() * sizeof(uint32_t), 0);
+
+                    uint32_t triAlignedSize = ((uint32_t)tris.size() + 3) & ~3;
+                    std::vector<uint8_t> trisPadded(triAlignedSize, 0);
+                    memcpy(trisPadded.data(), tris.data(), tris.size());
+                    m_meshletTriangleBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletTriangleBuffer->create(triAlignedSize,
+                        vk::BufferUsageFlagBits::eStorageBuffer,
+                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    m_meshletTriangleBuffer->uploadData(trisPadded.data(), triAlignedSize, 0);
+
+                    auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+
+                    vk::DescriptorBufferInfo meshletInfo(m_meshletBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::DescriptorBufferInfo boundsInfo(m_meshletBoundsBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::DescriptorBufferInfo vertInfo(m_meshletVertexBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::DescriptorBufferInfo triInfo(m_meshletTriangleBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::DescriptorBufferInfo vboInfo(globalVBO->getHandle(), 0, VK_WHOLE_SIZE);
+
+                    vk::DescriptorBufferInfo bufInfos[] = {meshletInfo, boundsInfo, vertInfo, triInfo, vboInfo};
+                    std::vector<vk::WriteDescriptorSet> writes(5);
+                    for (uint32_t i = 0; i < 5; i++) {
+                        writes[i].dstSet = m_meshletDescriptorSet;
+                        writes[i].dstBinding = i;
+                        writes[i].dstArrayElement = 0;
+                        writes[i].descriptorCount = 1;
+                        writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+                        writes[i].pBufferInfo = &bufInfos[i];
+                    }
+                    m_device.updateDescriptorSets(writes, {});
+
+                    MeshletBuilder::clearDirty();
+                    NX_CORE_INFO("Meshlet GPU buffers uploaded: {} meshlets", meshlets.size());
+                }
+            }
+
+            if (m_meshletBuffer) {
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_meshletPipeline);
+                vk::DescriptorSet sets[] = {m_context->getBindlessManager()->getSet(), m_meshletDescriptorSet};
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_meshletPipelineLayout, 0, 2, sets, 0, nullptr);
+
+                struct MeshletPushParamsCPU {
+                    uint32_t meshletOffset;
+                    uint32_t meshletCount;
+                    uint32_t vertexBufferOffset;
+                    uint32_t _pad0;
+                    float viewProj[16];
+                    float worldMatrix[16];
+                    float albedoFactor[4];
+                    float cameraPos[3];
+                    float _pad1;
+                };
+
+                for (const auto& draw : snapshot->meshletDraws) {
+                    MeshletPushParamsCPU params = {};
+                    params.meshletOffset = draw.meshletOffset;
+                    params.meshletCount = draw.meshletCount;
+                    params.vertexBufferOffset = draw.vertexBufferOffset;
+                    memcpy(params.viewProj, snapshot->mainCameraViewProj.data(), sizeof(float) * 16);
+                    memcpy(params.worldMatrix, draw.worldMatrix.data(), sizeof(float) * 16);
+                    memcpy(params.albedoFactor, draw.albedoFactor.data(), sizeof(float) * 4);
+                    memcpy(params.cameraPos, snapshot->mainCameraPosition.data(), sizeof(float) * 3);
+                    commandBuffer.pushConstants<MeshletPushParamsCPU>(m_meshletPipelineLayout,
+                        vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment,
+                        0, params);
+
+                    uint32_t taskGroupCount = (draw.meshletCount + 31) / 32;
+                    static auto pfnDrawMeshTasks = (PFN_vkCmdDrawMeshTasksEXT)
+                        vkGetDeviceProcAddr(m_device, "vkCmdDrawMeshTasksEXT");
+                    if (pfnDrawMeshTasks) {
+                        pfnDrawMeshTasks(commandBuffer, taskGroupCount, 1, 1);
+                    }
+                }
             }
         }
 

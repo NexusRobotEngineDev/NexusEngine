@@ -29,6 +29,7 @@ struct ObjectData {
 
     float4x4 mvp;
     float4x4 worldMatrix;
+    float4 boundingSphere;
     float4 highlightColor;
 };
 

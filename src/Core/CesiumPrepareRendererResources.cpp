@@ -510,6 +510,7 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
             obj.roughnessFactor = mesh.roughnessFactor;
             obj.isVisible = 0;
             obj.worldMatrix = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            obj.boundingSphere = {0.0f, 0.0f, 0.0f, 0.0f};
             obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
 
             DrawIndexedIndirectCommand cmd = {};

@@ -28,6 +28,7 @@ struct ObjectData {
 
     std::array<float, 16> mvp;
     std::array<float, 16> worldMatrix;
+    std::array<float, 4> boundingSphere;
     std::array<float, 4> highlightColor;
 };
 
@@ -65,12 +66,23 @@ struct RenderSnapshot {
         0.0f, 0.0f, 0.0f, 1.0f
     };
 
+    struct MeshletDrawEntry {
+        uint32_t meshletOffset;
+        uint32_t meshletCount;
+        uint32_t vertexBufferOffset;
+        std::array<float, 16> worldMatrix;
+        std::array<float, 4> albedoFactor;
+    };
+    std::vector<MeshletDrawEntry> meshletDraws;
+    std::array<float, 3> mainCameraPosition = {0.0f, 0.0f, 0.0f};
+
     void clear() {
         frameObjects.clear();
         for (auto& b : batches) {
             b.commands.clear();
         }
         batches.clear();
+        meshletDraws.clear();
         totalTriangles = 0;
         meshCount = 0;
         visionSensorValid = false;

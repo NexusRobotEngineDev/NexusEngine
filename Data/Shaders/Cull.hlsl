@@ -15,6 +15,7 @@ struct ObjectData {
 
     float4x4 mvp;
     float4x4 worldMatrix;
+    float4 boundingSphere;
     float4 highlightColor;
 };
 
@@ -50,11 +51,13 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
     }
 
     uint objIndex = pushParams.frameOffset + entityIndex;
+    ObjectData obj = objects[objIndex];
 
-    if (objects[objIndex].isVisible != 0) {
-        uint outputIndex;
-        InterlockedAdd(drawCountBuffer[pushParams.frameIndex], 1, outputIndex);
-
-        drawCommandsOut[outputIndex] = drawCommandsIn[entityIndex];
+    if (obj.isVisible == 0) {
+        return;
     }
+
+    uint outputIndex;
+    InterlockedAdd(drawCountBuffer[pushParams.frameIndex], 1, outputIndex);
+    drawCommandsOut[outputIndex] = drawCommandsIn[entityIndex];
 }

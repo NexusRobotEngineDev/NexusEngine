@@ -81,6 +81,7 @@ private:
     Status createCommandPool();
     Status createGraphicsPipeline();
     Status createComputePipeline();
+    Status createMeshletPipeline();
     Status createCommandBuffers();
     Status createSyncObjects();
     Status createOffscreenResources();
@@ -118,6 +119,17 @@ private:
 
     std::unique_ptr<VK_Buffer> m_countBuffer;
     std::unique_ptr<VK_Buffer> m_persistentCommandBuffer;
+
+    vk::PipelineLayout m_meshletPipelineLayout;
+    vk::Pipeline m_meshletPipeline;
+    vk::DescriptorSetLayout m_meshletSetLayout;
+    vk::DescriptorPool m_meshletDescriptorPool;
+    vk::DescriptorSet m_meshletDescriptorSet;
+    std::unique_ptr<VK_Buffer> m_meshletBuffer;
+    std::unique_ptr<VK_Buffer> m_meshletBoundsBuffer;
+    std::unique_ptr<VK_Buffer> m_meshletVertexBuffer;
+    std::unique_ptr<VK_Buffer> m_meshletTriangleBuffer;
+    bool m_meshletPipelineReady = false;
 
 
 #ifdef ENABLE_RMLUI

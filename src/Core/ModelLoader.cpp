@@ -1,4 +1,5 @@
 #include "ModelLoader.h"
+#include "MeshletBuilder.h"
 #include "MeshManager.h"
 #include "Scene.h"
 #include "Components.h"
@@ -182,6 +183,37 @@ static void processNode(TextureManager* textureManager, aiNode* node, const aiSc
                 }
                 if (fallbackColor && albedoIndex == 0) {
                     meshComp.albedoFactor = *fallbackColor;
+                }
+
+                float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+                for (unsigned int vi = 0; vi < mesh->mNumVertices; vi++) {
+                    cx += mesh->mVertices[vi].x;
+                    cy += mesh->mVertices[vi].y;
+                    cz += mesh->mVertices[vi].z;
+                }
+                if (mesh->mNumVertices > 0) {
+                    float inv = 1.0f / (float)mesh->mNumVertices;
+                    cx *= inv; cy *= inv; cz *= inv;
+                }
+                float maxDistSq = 0.0f;
+                for (unsigned int vi = 0; vi < mesh->mNumVertices; vi++) {
+                    float dx = mesh->mVertices[vi].x - cx;
+                    float dy = mesh->mVertices[vi].y - cy;
+                    float dz = mesh->mVertices[vi].z - cz;
+                    float distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq > maxDistSq) maxDistSq = distSq;
+                }
+                meshComp.boundingSphere = {cx, cy, cz, std::sqrt(maxDistSq)};
+
+                if (fallbackColor) {
+                    auto meshletResult = MeshletBuilder::build(
+                        vertices.data(), indices.data(),
+                        vertices.size() / 8, indices.size(), 8);
+                    if (!meshletResult.meshlets.empty()) {
+                        meshComp.meshletOffset = MeshletBuilder::appendToGlobalPool(meshletResult);
+                        meshComp.meshletCount = (uint32_t)meshletResult.meshlets.size();
+                        meshComp.useMeshShader = true;
+                    }
                 }
 
                 NX_CORE_INFO("[TextureDebug] Submesh entity assigned: Albedo={}, Sampler={}", albedoIndex, samplerIndex);

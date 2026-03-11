@@ -501,6 +501,7 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         } else {
             viewProj = multiplyMat4(proj, view);
             mainCameraProcessed = true;
+            snapshot->mainCameraPosition = {pos[0], pos[1], pos[2]};
         }
     }
 
@@ -521,6 +522,19 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             continue;
         }
 
+        if (mesh.useMeshShader && mesh.meshletCount > 0) {
+            RenderSnapshot::MeshletDrawEntry entry;
+            entry.meshletOffset = mesh.meshletOffset;
+            entry.meshletCount = mesh.meshletCount;
+            entry.vertexBufferOffset = mesh.vertexOffset;
+            entry.worldMatrix = transform.worldMatrix;
+            entry.albedoFactor = mesh.albedoFactor;
+            snapshot->meshletDraws.push_back(entry);
+            snapshot->totalTriangles += mesh.indexCount / 3;
+            snapshot->meshCount++;
+            continue;
+        }
+
         auto bridge = g_renderer ? g_renderer->getBridgeRenderer() : nullptr;
         if (!bridge) continue;
 
@@ -536,6 +550,7 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         obj.roughnessFactor = mesh.roughnessFactor;
         obj.isVisible = 1;
         obj.worldMatrix = transform.worldMatrix;
+        obj.boundingSphere = mesh.boundingSphere;
 
         bool isSelected = ((uint32_t)entity == selectedId);
         if (isSelected) {
