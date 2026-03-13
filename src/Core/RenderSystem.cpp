@@ -108,6 +108,8 @@ Status RenderSystem::initialize() {
     return OkStatus();
 }
 
+#include "MeshletBuilder.h"
+
 Nexus::MeshComponent RenderSystem::getCubeMeshComponent() const {
     Nexus::MeshComponent mesh;
     mesh.vertexOffset = this->m_cubeVertexOffset;
@@ -117,6 +119,23 @@ Nexus::MeshComponent RenderSystem::getCubeMeshComponent() const {
 }
 
 Status RenderSystem::renderFrame(RenderSnapshot* snapshot) {
+    if (MeshletBuilder::isDirty()) {
+        auto& meshlets = MeshletBuilder::getGlobalMeshlets();
+        auto& bounds = MeshletBuilder::getGlobalBounds();
+        auto& verts = MeshletBuilder::getGlobalVertices();
+        auto& tris = MeshletBuilder::getGlobalTriangles();
+
+        if (!meshlets.empty()) {
+            m_bridgeRenderer->updateMeshletBuffers(
+                meshlets.data(), meshlets.size() * sizeof(MeshletGPUData),
+                bounds.data(), bounds.size() * sizeof(MeshletGPUBounds),
+                verts.data(), verts.size() * sizeof(uint32_t),
+                tris.data(), tris.size() * sizeof(uint8_t)
+            );
+            MeshletBuilder::clearDirty();
+            NX_CORE_INFO("Meshlet GPU buffers uploaded: {} meshlets", meshlets.size());
+        }
+    }
     return m_bridgeRenderer->renderFrame(snapshot);
 }
 

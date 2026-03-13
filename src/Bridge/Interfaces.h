@@ -145,6 +145,11 @@ public:
     virtual void present(uint32_t imageIndex) = 0;
     virtual void shutdown() = 0;
     virtual uint64_t getFrameCount() const = 0;
+    virtual void updateMeshletBuffers(
+        const void* meshletsData, size_t meshletsSize,
+        const void* boundsData, size_t boundsSize,
+        const void* verticesData, size_t verticesSize,
+        const void* trianglesData, size_t trianglesSize) {};
 };
 
 } // namespace Nexus

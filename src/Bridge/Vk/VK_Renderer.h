@@ -77,6 +77,12 @@ public:
      */
     void shutdown() override;
 
+    void updateMeshletBuffers(
+        const void* meshletsData, size_t meshletsSize,
+        const void* boundsData, size_t boundsSize,
+        const void* verticesData, size_t verticesSize,
+        const void* trianglesData, size_t trianglesSize) override;
+
 private:
     Status createCommandPool();
     Status createGraphicsPipeline();

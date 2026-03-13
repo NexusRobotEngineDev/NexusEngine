@@ -4,13 +4,9 @@
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
-#include "../../Core/MeshletBuilder.h"
 
 namespace Nexus {
 
-using Core::MeshletBuilder;
-using Core::MeshletGPUData;
-using Core::MeshletGPUBounds;
 
 std::atomic<uint32_t> g_RenderStats_DrawCalls{0};
 std::atomic<uint32_t> g_RenderStats_Triangles{0};
@@ -851,64 +847,6 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
         }
 
         if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
-            if (MeshletBuilder::isDirty()) {
-                auto& meshlets = MeshletBuilder::getGlobalMeshlets();
-                auto& bounds = MeshletBuilder::getGlobalBounds();
-                auto& verts = MeshletBuilder::getGlobalVertices();
-                auto& tris = MeshletBuilder::getGlobalTriangles();
-
-                if (!meshlets.empty()) {
-                    m_meshletBuffer = std::make_unique<VK_Buffer>(m_context);
-                    m_meshletBuffer->create(meshlets.size() * sizeof(MeshletGPUData),
-                        vk::BufferUsageFlagBits::eStorageBuffer,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-                    m_meshletBuffer->uploadData(meshlets.data(), meshlets.size() * sizeof(MeshletGPUData), 0);
-
-                    m_meshletBoundsBuffer = std::make_unique<VK_Buffer>(m_context);
-                    m_meshletBoundsBuffer->create(bounds.size() * sizeof(MeshletGPUBounds),
-                        vk::BufferUsageFlagBits::eStorageBuffer,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-                    m_meshletBoundsBuffer->uploadData(bounds.data(), bounds.size() * sizeof(MeshletGPUBounds), 0);
-
-                    m_meshletVertexBuffer = std::make_unique<VK_Buffer>(m_context);
-                    m_meshletVertexBuffer->create(verts.size() * sizeof(uint32_t),
-                        vk::BufferUsageFlagBits::eStorageBuffer,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-                    m_meshletVertexBuffer->uploadData(verts.data(), verts.size() * sizeof(uint32_t), 0);
-
-                    uint32_t triAlignedSize = ((uint32_t)tris.size() + 3) & ~3;
-                    std::vector<uint8_t> trisPadded(triAlignedSize, 0);
-                    memcpy(trisPadded.data(), tris.data(), tris.size());
-                    m_meshletTriangleBuffer = std::make_unique<VK_Buffer>(m_context);
-                    m_meshletTriangleBuffer->create(triAlignedSize,
-                        vk::BufferUsageFlagBits::eStorageBuffer,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-                    m_meshletTriangleBuffer->uploadData(trisPadded.data(), triAlignedSize, 0);
-
-                    auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
-
-                    vk::DescriptorBufferInfo meshletInfo(m_meshletBuffer->getHandle(), 0, VK_WHOLE_SIZE);
-                    vk::DescriptorBufferInfo boundsInfo(m_meshletBoundsBuffer->getHandle(), 0, VK_WHOLE_SIZE);
-                    vk::DescriptorBufferInfo vertInfo(m_meshletVertexBuffer->getHandle(), 0, VK_WHOLE_SIZE);
-                    vk::DescriptorBufferInfo triInfo(m_meshletTriangleBuffer->getHandle(), 0, VK_WHOLE_SIZE);
-                    vk::DescriptorBufferInfo vboInfo(globalVBO->getHandle(), 0, VK_WHOLE_SIZE);
-
-                    vk::DescriptorBufferInfo bufInfos[] = {meshletInfo, boundsInfo, vertInfo, triInfo, vboInfo};
-                    std::vector<vk::WriteDescriptorSet> writes(5);
-                    for (uint32_t i = 0; i < 5; i++) {
-                        writes[i].dstSet = m_meshletDescriptorSet;
-                        writes[i].dstBinding = i;
-                        writes[i].dstArrayElement = 0;
-                        writes[i].descriptorCount = 1;
-                        writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-                        writes[i].pBufferInfo = &bufInfos[i];
-                    }
-                    m_device.updateDescriptorSets(writes, {});
-
-                    MeshletBuilder::clearDirty();
-                    NX_CORE_INFO("Meshlet GPU buffers uploaded: {} meshlets", meshlets.size());
-                }
-            }
 
             if (m_meshletBuffer) {
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_meshletPipeline);
@@ -1327,6 +1265,62 @@ void VK_Renderer::uploadSnapshotData(RenderSnapshot* snapshot) {
     }
 
     (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+}
+
+void VK_Renderer::updateMeshletBuffers(
+    const void* meshletsData, size_t meshletsSize,
+    const void* boundsData, size_t boundsSize,
+    const void* verticesData, size_t verticesSize,
+    const void* trianglesData, size_t trianglesSize)
+{
+    if (meshletsSize > 0) {
+        m_meshletBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletBuffer->create(meshletsSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletBuffer->uploadData(meshletsData, meshletsSize, 0);
+
+        m_meshletBoundsBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletBoundsBuffer->create(boundsSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletBoundsBuffer->uploadData(boundsData, boundsSize, 0);
+
+        m_meshletVertexBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletVertexBuffer->create(verticesSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletVertexBuffer->uploadData(verticesData, verticesSize, 0);
+
+        uint32_t triAlignedSize = (static_cast<uint32_t>(trianglesSize) + 3) & ~3;
+        std::vector<uint8_t> trisPadded(triAlignedSize, 0);
+        memcpy(trisPadded.data(), trianglesData, trianglesSize);
+        m_meshletTriangleBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletTriangleBuffer->create(triAlignedSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletTriangleBuffer->uploadData(trisPadded.data(), triAlignedSize, 0);
+
+        auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+
+        vk::DescriptorBufferInfo meshletInfo(m_meshletBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo boundsInfo(m_meshletBoundsBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo vertInfo(m_meshletVertexBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo triInfo(m_meshletTriangleBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo vboInfo(globalVBO->getHandle(), 0, VK_WHOLE_SIZE);
+
+        vk::DescriptorBufferInfo bufInfos[] = {meshletInfo, boundsInfo, vertInfo, triInfo, vboInfo};
+        std::vector<vk::WriteDescriptorSet> writes(5);
+        for (uint32_t i = 0; i < 5; i++) {
+            writes[i].dstSet = m_meshletDescriptorSet;
+            writes[i].dstBinding = i;
+            writes[i].dstArrayElement = 0;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            writes[i].pBufferInfo = &bufInfos[i];
+        }
+        m_device.updateDescriptorSets(writes, {});
+    }
 }
 
 } // namespace Nexus
