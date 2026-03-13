@@ -8,6 +8,8 @@
 #include <vector>
 #include <atomic>
 
+#include "MeshletBuilder.h"
+
 namespace Nexus {
     std::atomic<float> g_RenderStats_FPS{0.0f};
     std::atomic<float> g_RenderStats_FrameTime{0.0f};
@@ -107,9 +109,6 @@ Status RenderSystem::initialize() {
     NX_CORE_INFO("RenderSystem: Initialized successfully");
     return OkStatus();
 }
-
-#include "MeshletBuilder.h"
-
 Nexus::MeshComponent RenderSystem::getCubeMeshComponent() const {
     Nexus::MeshComponent mesh;
     mesh.vertexOffset = this->m_cubeVertexOffset;
