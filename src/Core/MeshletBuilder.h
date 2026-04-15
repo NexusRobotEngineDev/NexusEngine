@@ -73,6 +73,7 @@ public:
     static std::vector<uint8_t>& getGlobalTriangles() { return s_meshletTriangles; }
     static bool isDirty() { return s_dirty; }
     static void clearDirty() { s_dirty = false; }
+    static std::mutex& getMutex() { return s_mutex; }
 
 private:
     static std::mutex s_mutex;

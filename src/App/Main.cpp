@@ -508,11 +508,15 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
     auto meshView = registry.view<MeshComponent, TransformComponent>();
 
     uint32_t selectedId = 0xFFFFFFFF;
+    bool engineSupportsMeshShaders = false;
 #if ENABLE_VULKAN
     if (g_renderer) {
         selectedId = g_renderer->getBridgeRenderer()->m_selectedEntityId.load(std::memory_order_relaxed);
+        engineSupportsMeshShaders = g_renderer->getBridgeRenderer()->isMeshletPipelineReady();
     }
 #endif
+
+    auto bridgeOuter = g_renderer ? g_renderer->getBridgeRenderer() : nullptr;
 
     for (auto entity : meshView) {
         auto& mesh = meshView.get<MeshComponent>(entity);
@@ -522,7 +526,7 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             continue;
         }
 
-        if (mesh.useMeshShader && mesh.meshletCount > 0) {
+        if (mesh.useMeshShader && mesh.meshletCount > 0 && engineSupportsMeshShaders) {
             RenderSnapshot::MeshletDrawEntry entry;
             entry.meshletOffset = mesh.meshletOffset;
             entry.meshletCount = mesh.meshletCount;
@@ -535,11 +539,10 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             continue;
         }
 
-        auto bridge = g_renderer ? g_renderer->getBridgeRenderer() : nullptr;
-        if (!bridge) continue;
+        if (!bridgeOuter) continue;
 
         if (mesh.persistentSlot == 0xFFFFFFFF) {
-            mesh.persistentSlot = bridge->allocatePersistentSlot();
+            mesh.persistentSlot = bridgeOuter->allocatePersistentSlot();
         }
 
         ObjectData obj = {};
@@ -566,7 +569,7 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         cmd.vertexOffset = mesh.vertexOffset;
         cmd.firstInstance = mesh.persistentSlot;
 
-        bridge->updatePersistentSlot(mesh.persistentSlot, obj, cmd);
+        bridgeOuter->updatePersistentSlot(mesh.persistentSlot, obj, cmd);
 
         snapshot->totalTriangles += mesh.indexCount / 3;
         snapshot->meshCount++;

@@ -214,7 +214,7 @@ Status VK_Renderer::createOffscreenResources() {
 
     m_offscreenReadback = std::make_unique<VK_Buffer>(m_context);
     size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
-    NX_RETURN_IF_ERROR(m_offscreenReadback->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    NX_RETURN_IF_ERROR(m_offscreenReadback->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached));
     m_offscreenReadbackMapped = m_offscreenReadback->map();
 
     return OkStatus();
@@ -226,7 +226,6 @@ ITexture* VK_Renderer::getSwapchainTexture(uint32_t index) {
 }
 
 uint32_t VK_Renderer::allocatePersistentSlot() {
-    std::lock_guard<std::recursive_mutex> lock(m_slotMutex);
     if (!m_freeSlots.empty()) {
         uint32_t slot = m_freeSlots.back();
         m_freeSlots.pop_back();
@@ -242,29 +241,23 @@ void VK_Renderer::freePersistentSlot(uint32_t slot) {
     DrawIndexedIndirectCommand emptyCmd = {};
     updatePersistentSlot(slot, emptyObj, emptyCmd);
 
-    std::lock_guard<std::recursive_mutex> lock(m_slotMutex);
     m_freeSlots.push_back(slot);
 }
 
 void VK_Renderer::updatePersistentSlot(uint32_t slot, const ObjectData& obj, const DrawIndexedIndirectCommand& cmd) {
-    std::lock_guard<std::recursive_mutex> lock(m_slotMutex);
-
-    if (m_localObjectData.size() <= slot) {
-        m_localObjectData.resize(slot + 1000, ObjectData{});
-        m_localIndirectCommands.resize(slot + 1000, DrawIndexedIndirectCommand{});
-    }
-    m_localObjectData[slot] = obj;
-    m_localIndirectCommands[slot] = cmd;
+    PersistentSlotUpdate update;
+    update.slot = slot;
+    update.obj = obj;
+    update.cmd = cmd;
+    m_slotUpdateQueue.push(update);
 }
 
 void VK_Renderer::setPersistentSlotVisibility(uint32_t slot, bool visible) {
-    std::lock_guard<std::recursive_mutex> lock(m_slotMutex);
-
-    if (m_localObjectData.size() <= slot) {
-        m_localObjectData.resize(slot + 1000, ObjectData{});
-        m_localIndirectCommands.resize(slot + 1000, DrawIndexedIndirectCommand{});
-    }
-    m_localObjectData[slot].isVisible = visible ? 1 : 0;
+    PersistentSlotUpdate update;
+    update.slot = slot;
+    update.type = 1; // 1 means visibility update only
+    update.obj.isVisible = visible ? 1 : 0;
+    m_slotUpdateQueue.push(update);
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
@@ -1069,10 +1062,11 @@ void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, 
 bool VK_Renderer::getOffscreenPixels(std::vector<uint8_t>& outPixels) {
     if (!m_offscreenReady || !m_offscreenReadbackMapped) return false;
 
-    static int logCnt = 0;
-    if (logCnt++ % 100 == 0) {
-        NX_CORE_INFO("getOffscreenPixels returning true!");
-    }
+    vk::MappedMemoryRange range;
+    range.memory = m_offscreenReadback->getMemory();
+    range.offset = 0;
+    range.size = VK_WHOLE_SIZE;
+    (void)m_device.invalidateMappedMemoryRanges(1, &range);
 
     size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
     outPixels.resize(size);
@@ -1121,7 +1115,6 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
 
     uint32_t activeCount = m_maxEntityIndex.load(std::memory_order_relaxed);
     if (activeCount > 0 && m_objectDataBuffer && m_persistentCommandBuffer) {
-        std::lock_guard<std::recursive_mutex> lock(m_slotMutex);
         size_t objCap = 100000;
         size_t objOffset = (m_currentFrame * objCap) * sizeof(ObjectData);
         size_t cmdOffset = (m_currentFrame * objCap) * sizeof(DrawIndexedIndirectCommand);
@@ -1129,6 +1122,20 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
         if (m_localObjectData.size() < activeCount) {
             m_localObjectData.resize(activeCount, ObjectData{});
             m_localIndirectCommands.resize(activeCount, DrawIndexedIndirectCommand{});
+        }
+
+        PersistentSlotUpdate update;
+        while (m_slotUpdateQueue.pop(update)) {
+            if (update.slot >= m_localObjectData.size()) {
+                m_localObjectData.resize(update.slot + 1000, ObjectData{});
+                m_localIndirectCommands.resize(update.slot + 1000, DrawIndexedIndirectCommand{});
+            }
+            if (update.type == 0) {
+                m_localObjectData[update.slot] = update.obj;
+                m_localIndirectCommands[update.slot] = update.cmd;
+            } else if (update.type == 1) {
+                m_localObjectData[update.slot].isVisible = update.obj.isVisible;
+            }
         }
 
         m_objectDataBuffer->uploadData(m_localObjectData.data(), activeCount * sizeof(ObjectData), objOffset);
@@ -1273,6 +1280,7 @@ void VK_Renderer::updateMeshletBuffers(
     const void* verticesData, size_t verticesSize,
     const void* trianglesData, size_t trianglesSize)
 {
+    if (!m_meshletPipelineReady) return;
     if (meshletsSize > 0) {
         m_meshletBuffer = std::make_unique<VK_Buffer>(m_context);
         m_meshletBuffer->create(meshletsSize,

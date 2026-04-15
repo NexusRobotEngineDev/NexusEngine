@@ -62,11 +62,11 @@ Status VK_Swapchain::createSwapchain(uint32_t width, uint32_t height) {
 
     vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
     for (const auto& availablePresentMode : presentModes.value) {
-        if (availablePresentMode == vk::PresentModeKHR::eImmediate) {
+        if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
             presentMode = availablePresentMode;
-            break;
+            break; 
         }
-        if (availablePresentMode == vk::PresentModeKHR::eMailbox && presentMode != vk::PresentModeKHR::eImmediate) {
+        if (availablePresentMode == vk::PresentModeKHR::eImmediate && presentMode != vk::PresentModeKHR::eMailbox) {
             presentMode = availablePresentMode;
         }
     }

@@ -27,7 +27,7 @@ Status MeshManager::initialize() {
     m_vertexAllocator = std::make_unique<SubAllocator>(VERTEX_CAPACITY);
     m_indexAllocator = std::make_unique<SubAllocator>(INDEX_CAPACITY);
 
-    m_vertexBuffer = m_context->createBuffer(VBO_SIZE, 0x0082, 0x0006);
+    m_vertexBuffer = m_context->createBuffer(VBO_SIZE, 0x0092, 0x0006);
     m_indexBuffer = m_context->createBuffer(IBO_SIZE, 0x0042, 0x0006);
     return OkStatus();
 }

@@ -83,6 +83,8 @@ public:
         const void* verticesData, size_t verticesSize,
         const void* trianglesData, size_t trianglesSize) override;
 
+    bool isMeshletPipelineReady() const override { return m_meshletPipelineReady; }
+
 private:
     Status createCommandPool();
     Status createGraphicsPipeline();
@@ -164,12 +166,16 @@ public:
     void updatePersistentSlot(uint32_t slot, const ObjectData& obj, const DrawIndexedIndirectCommand& cmd);
     void setPersistentSlotVisibility(uint32_t slot, bool visible);
 
-    void lockPersistentData() { m_slotMutex.lock(); }
-    void unlockPersistentData() { m_slotMutex.unlock(); }
-
 private:
-    std::recursive_mutex m_slotMutex;
     std::vector<uint32_t> m_freeSlots;
+
+    struct PersistentSlotUpdate {
+        uint32_t slot;
+        ObjectData obj;
+        DrawIndexedIndirectCommand cmd;
+        int type = 0; 
+    };
+    SPSCQueue<PersistentSlotUpdate, 100000> m_slotUpdateQueue;
 
     std::vector<ObjectData> m_localObjectData;
     std::vector<DrawIndexedIndirectCommand> m_localIndirectCommands;

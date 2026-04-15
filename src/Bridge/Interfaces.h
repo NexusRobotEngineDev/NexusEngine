@@ -150,6 +150,7 @@ public:
         const void* boundsData, size_t boundsSize,
         const void* verticesData, size_t verticesSize,
         const void* trianglesData, size_t trianglesSize) {};
+    virtual bool isMeshletPipelineReady() const { return false; }
 };
 
 } // namespace Nexus

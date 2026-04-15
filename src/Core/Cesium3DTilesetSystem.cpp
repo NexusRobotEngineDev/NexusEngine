@@ -230,8 +230,6 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
 
             auto bridge = g_tilesetRenderSystem ? g_tilesetRenderSystem->getBridgeRenderer() : nullptr;
 
-            if (bridge) bridge->lockPersistentData();
-
             auto viewMeshes = registry.view<CesiumGltfComponent, MeshComponent>();
             size_t cesiumEntityCount = 0;
             for (auto e : viewMeshes) {
@@ -272,8 +270,6 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
                     }
                 }
             }
-
-            if (bridge) bridge->unlockPersistentData();
 
             if (shouldLogCesium) {
                 NX_CORE_INFO("Cesium3DTilesetSystem: visible={}, cesiumEntities={}, rendered={}, notDone={}, noContent={}, noResources={}",
