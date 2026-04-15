@@ -509,8 +509,8 @@ Status VK_Renderer::createMeshletPipeline() {
     vk::ShaderModule fragModule;
     NX_ASSIGN_OR_RETURN(fragModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "PSMain", shaderc_fragment_shader));
 
-    std::vector<vk::DescriptorSetLayoutBinding> bindings(5);
-    for (int i = 0; i < 5; i++) {
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(6);
+    for (int i = 0; i < 6; i++) {
         bindings[i].binding = i;
         bindings[i].descriptorType = vk::DescriptorType::eStorageBuffer;
         bindings[i].descriptorCount = 1;
@@ -527,22 +527,16 @@ Status VK_Renderer::createMeshletPipeline() {
         m_meshletSetLayout
     };
 
-    struct MeshletPushParamsCPU {
-        uint32_t meshletOffset;
-        uint32_t meshletCount;
-        uint32_t vertexBufferOffset;
-        uint32_t _pad0;
+    struct MeshletPushGlobalParamsCPU {
         float viewProj[16];
-        float worldMatrix[16];
-        float albedoFactor[4];
         float cameraPos[3];
-        float _pad1;
+        float _pad0;
     };
 
     vk::PushConstantRange pushRange;
     pushRange.stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment;
     pushRange.offset = 0;
-    pushRange.size = sizeof(MeshletPushParamsCPU);
+    pushRange.size = sizeof(MeshletPushGlobalParamsCPU);
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, static_cast<uint32_t>(setLayouts.size()), setLayouts.data(), 1, &pushRange);
     if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_meshletPipelineLayout) != vk::Result::eSuccess) {
@@ -603,7 +597,7 @@ Status VK_Renderer::createMeshletPipeline() {
     m_device.destroyShaderModule(fragModule);
 
     std::vector<vk::DescriptorPoolSize> poolSizes = {
-        {vk::DescriptorType::eStorageBuffer, 5}
+        {vk::DescriptorType::eStorageBuffer, 6}
     };
     vk::DescriptorPoolCreateInfo poolInfo({}, 1, static_cast<uint32_t>(poolSizes.size()), poolSizes.data());
     auto poolRes = m_device.createDescriptorPool(poolInfo);
@@ -842,41 +836,72 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
         if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
 
             if (m_meshletBuffer) {
+                struct MeshletPushGlobalParamsCPU {
+                    float viewProj[16];
+                    float cameraPos[3];
+                    uint32_t frameOffset;
+                };
+
+                size_t maxDraws = 100000;
+                if (!m_meshletInstanceBuffer) {
+                    m_meshletInstanceBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletInstanceBuffer->create(MAX_FRAMES_IN_FLIGHT * maxDraws * sizeof(MeshletInstanceData), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    
+                    m_meshletIndirectBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletIndirectBuffer->create(MAX_FRAMES_IN_FLIGHT * maxDraws * sizeof(vk::DrawMeshTasksIndirectCommandEXT), vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    
+                    vk::DescriptorBufferInfo instInfo(m_meshletInstanceBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::WriteDescriptorSet write{};
+                    write.dstSet = m_meshletDescriptorSet;
+                    write.dstBinding = 5;
+                    write.dstArrayElement = 0;
+                    write.descriptorCount = 1;
+                    write.descriptorType = vk::DescriptorType::eStorageBuffer;
+                    write.pBufferInfo = &instInfo;
+                    m_device.updateDescriptorSets(1, &write, 0, nullptr);
+                }
+
+                std::vector<MeshletInstanceData> instanceData(snapshot->meshletDraws.size());
+                std::vector<vk::DrawMeshTasksIndirectCommandEXT> indirectCmds(snapshot->meshletDraws.size());
+
+                for (size_t i = 0; i < snapshot->meshletDraws.size(); i++) {
+                    const auto& draw = snapshot->meshletDraws[i];
+                    instanceData[i].meshletOffset = draw.meshletOffset;
+                    instanceData[i].meshletCount = draw.meshletCount;
+                    instanceData[i].vertexBufferOffset = draw.vertexBufferOffset;
+                    instanceData[i]._pad0 = 0;
+                    memcpy(instanceData[i].worldMatrix.data(), draw.worldMatrix.data(), sizeof(float)*16);
+                    memcpy(instanceData[i].albedoFactor.data(), draw.albedoFactor.data(), sizeof(float)*4);
+                    
+                    indirectCmds[i].groupCountX = (draw.meshletCount + 31) / 32;
+                    indirectCmds[i].groupCountY = 1;
+                    indirectCmds[i].groupCountZ = 1;
+                }
+
+                size_t frameOffset = m_currentFrame * maxDraws;
+                size_t instOffset = frameOffset * sizeof(MeshletInstanceData);
+                size_t cmdOffset = frameOffset * sizeof(vk::DrawMeshTasksIndirectCommandEXT);
+
+                m_meshletInstanceBuffer->uploadData(instanceData.data(), instanceData.size() * sizeof(MeshletInstanceData), instOffset);
+                m_meshletIndirectBuffer->uploadData(indirectCmds.data(), indirectCmds.size() * sizeof(vk::DrawMeshTasksIndirectCommandEXT), cmdOffset);
+
                 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_meshletPipeline);
                 vk::DescriptorSet sets[] = {m_context->getBindlessManager()->getSet(), m_meshletDescriptorSet};
                 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_meshletPipelineLayout, 0, 2, sets, 0, nullptr);
+                
+                MeshletPushGlobalParamsCPU params = {};
+                memcpy(params.viewProj, snapshot->mainCameraViewProj.data(), sizeof(float) * 16);
+                memcpy(params.cameraPos, snapshot->mainCameraPosition.data(), sizeof(float) * 3);
+                params.frameOffset = (uint32_t)frameOffset;
 
-                struct MeshletPushParamsCPU {
-                    uint32_t meshletOffset;
-                    uint32_t meshletCount;
-                    uint32_t vertexBufferOffset;
-                    uint32_t _pad0;
-                    float viewProj[16];
-                    float worldMatrix[16];
-                    float albedoFactor[4];
-                    float cameraPos[3];
-                    float _pad1;
-                };
+                commandBuffer.pushConstants<MeshletPushGlobalParamsCPU>(m_meshletPipelineLayout,
+                    vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment,
+                    0, params);
 
-                for (const auto& draw : snapshot->meshletDraws) {
-                    MeshletPushParamsCPU params = {};
-                    params.meshletOffset = draw.meshletOffset;
-                    params.meshletCount = draw.meshletCount;
-                    params.vertexBufferOffset = draw.vertexBufferOffset;
-                    memcpy(params.viewProj, snapshot->mainCameraViewProj.data(), sizeof(float) * 16);
-                    memcpy(params.worldMatrix, draw.worldMatrix.data(), sizeof(float) * 16);
-                    memcpy(params.albedoFactor, draw.albedoFactor.data(), sizeof(float) * 4);
-                    memcpy(params.cameraPos, snapshot->mainCameraPosition.data(), sizeof(float) * 3);
-                    commandBuffer.pushConstants<MeshletPushParamsCPU>(m_meshletPipelineLayout,
-                        vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment,
-                        0, params);
-
-                    uint32_t taskGroupCount = (draw.meshletCount + 31) / 32;
-                    static auto pfnDrawMeshTasks = (PFN_vkCmdDrawMeshTasksEXT)
-                        vkGetDeviceProcAddr(m_device, "vkCmdDrawMeshTasksEXT");
-                    if (pfnDrawMeshTasks) {
-                        pfnDrawMeshTasks(commandBuffer, taskGroupCount, 1, 1);
-                    }
+                static auto pfnDrawMeshTasksIndirect = (PFN_vkCmdDrawMeshTasksIndirectEXT)
+                    vkGetDeviceProcAddr(m_device, "vkCmdDrawMeshTasksIndirectEXT");
+                if (pfnDrawMeshTasksIndirect) {
+                    pfnDrawMeshTasksIndirect(commandBuffer, m_meshletIndirectBuffer->getHandle(), cmdOffset, (uint32_t)indirectCmds.size(), sizeof(vk::DrawMeshTasksIndirectCommandEXT));
                 }
             }
         }

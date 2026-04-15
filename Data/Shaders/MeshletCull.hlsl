@@ -26,29 +26,34 @@ struct Vertex {
     float3 normal;
 };
 
-struct MeshletPushParams {
+struct MeshletPushGlobalParams {
+    float4x4 viewProj;
+    float3 cameraPos;
+    float _pad0;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<MeshletPushGlobalParams> pushParams;
+
+struct MeshletInstanceData {
     uint meshletOffset;
     uint meshletCount;
     uint vertexBufferOffset;
     uint _pad0;
-    float4x4 viewProj;
     float4x4 worldMatrix;
     float4 albedoFactor;
-    float3 cameraPos;
-    float _pad1;
 };
-
-[[vk::push_constant]]
-ConstantBuffer<MeshletPushParams> pushParams;
 
 StructuredBuffer<MeshletData> meshletBuffer : register(t0, space2);
 StructuredBuffer<MeshletBounds> boundsBuffer : register(t1, space2);
 StructuredBuffer<uint> meshletVertexBuffer : register(t2, space2);
 StructuredBuffer<uint> meshletTriangleBuffer : register(t3, space2);
 StructuredBuffer<Vertex> globalVertexBuffer : register(t4, space2);
+StructuredBuffer<MeshletInstanceData> meshletInstances : register(t5, space2);
 
 struct Payload {
     uint meshletIndices[32];
+    uint drawID;
 };
 
 groupshared Payload s_Payload;
@@ -68,20 +73,21 @@ bool isBackfacing(float3 coneAxis, float coneCutoff, float3 center, float3 camer
 }
 
 [numthreads(32, 1, 1)]
-void ASMain(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID) {
+void ASMain(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, [[vk::builtin("DrawIndex")]] uint drawID : DRAWID) {
+    MeshletInstanceData instance = meshletInstances[drawID];
     uint meshletIndex = gid * 32 + gtid;
     bool visible = false;
 
-    if (meshletIndex < pushParams.meshletCount) {
-        uint globalIdx = pushParams.meshletOffset + meshletIndex;
+    if (meshletIndex < instance.meshletCount) {
+        uint globalIdx = instance.meshletOffset + meshletIndex;
         MeshletBounds b = boundsBuffer[globalIdx];
 
-        float4 worldCenter4 = mul(float4(b.center, 1.0), pushParams.worldMatrix);
+        float4 worldCenter4 = mul(float4(b.center, 1.0), instance.worldMatrix);
         float3 worldCenter = worldCenter4.xyz;
 
-        float scaleX = length(pushParams.worldMatrix[0].xyz);
-        float scaleY = length(pushParams.worldMatrix[1].xyz);
-        float scaleZ = length(pushParams.worldMatrix[2].xyz);
+        float scaleX = length(instance.worldMatrix[0].xyz);
+        float scaleY = length(instance.worldMatrix[1].xyz);
+        float scaleZ = length(instance.worldMatrix[2].xyz);
         float maxScale = max(scaleX, max(scaleY, scaleZ));
         float worldRadius = b.radius * maxScale;
 
@@ -99,7 +105,7 @@ void ASMain(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID) {
         visible = !isSphereOutsideFrustum(worldCenter, worldRadius, planes);
 
         if (visible && b.coneCutoff < 1.0) {
-            float3 worldAxis = normalize(mul(float4(b.coneAxis, 0.0), pushParams.worldMatrix).xyz);
+            float3 worldAxis = normalize(mul(float4(b.coneAxis, 0.0), instance.worldMatrix).xyz);
             visible = !isBackfacing(worldAxis, b.coneCutoff, worldCenter, pushParams.cameraPos);
         }
     }
@@ -107,6 +113,10 @@ void ASMain(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID) {
     if (visible) {
         uint index = WavePrefixCountBits(visible);
         s_Payload.meshletIndices[index] = meshletIndex;
+    }
+
+    if (gtid == 0) {
+        s_Payload.drawID = drawID;
     }
 
     uint visibleCount = WaveActiveCountBits(visible);
@@ -122,26 +132,27 @@ void MSMain(
     out indices uint3 tris[124],
     out vertices VSOutput verts[64]
 ) {
+    MeshletInstanceData instance = meshletInstances[p.drawID];
     uint meshletIndex = p.meshletIndices[gid];
-    uint globalIdx = pushParams.meshletOffset + meshletIndex;
+    uint globalIdx = instance.meshletOffset + meshletIndex;
     MeshletData m = meshletBuffer[globalIdx];
 
     SetMeshOutputCounts(m.vertexCount, m.triangleCount);
 
     if (gtid < m.vertexCount) {
         uint vertexIndex = meshletVertexBuffer[m.vertexOffset + gtid];
-        uint globalVertIdx = pushParams.vertexBufferOffset + vertexIndex;
+        uint globalVertIdx = instance.vertexBufferOffset + vertexIndex;
         Vertex v = globalVertexBuffer[globalVertIdx];
 
-        float4 worldPos = mul(float4(v.position, 1.0), pushParams.worldMatrix);
+        float4 worldPos = mul(float4(v.position, 1.0), instance.worldMatrix);
         float4 clipPos = mul(worldPos, pushParams.viewProj);
 
         VSOutput out_v;
         out_v.position = clipPos;
         out_v.worldPos = worldPos.xyz;
-        out_v.normal = normalize(mul(float4(v.normal, 0.0), pushParams.worldMatrix).xyz);
+        out_v.normal = normalize(mul(float4(v.normal, 0.0), instance.worldMatrix).xyz);
         out_v.uv = v.uv;
-        out_v.color = pushParams.albedoFactor;
+        out_v.color = instance.albedoFactor;
         verts[gtid] = out_v;
     }
 

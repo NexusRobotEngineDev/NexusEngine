@@ -137,7 +137,18 @@ private:
     std::unique_ptr<VK_Buffer> m_meshletBoundsBuffer;
     std::unique_ptr<VK_Buffer> m_meshletVertexBuffer;
     std::unique_ptr<VK_Buffer> m_meshletTriangleBuffer;
+    std::unique_ptr<VK_Buffer> m_meshletInstanceBuffer;
+    std::unique_ptr<VK_Buffer> m_meshletIndirectBuffer;
     bool m_meshletPipelineReady = false;
+
+    struct alignas(16) MeshletInstanceData {
+        uint32_t meshletOffset;
+        uint32_t meshletCount;
+        uint32_t vertexBufferOffset;
+        uint32_t _pad0;
+        std::array<float, 16> worldMatrix;
+        std::array<float, 4> albedoFactor;
+    };
 
 
 #ifdef ENABLE_RMLUI
