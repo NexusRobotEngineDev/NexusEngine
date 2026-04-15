@@ -1,4 +1,5 @@
 #include "VK_Texture.h"
+#include "VK_TextureUploader.h"
 #include "Log.h"
 
 namespace Nexus {
@@ -7,6 +8,11 @@ VK_Texture::VK_Texture(VK_Context* context) : m_context(context), m_image(nullpt
 
 VK_Texture::~VK_Texture() {
     auto device = m_context->getDevice();
+    if (m_context && m_context->getBindlessManager()) {
+        m_context->getBindlessManager()->unregisterTexture(m_bindlessTextureIndex);
+        if (m_sampler) m_context->getBindlessManager()->unregisterSampler(m_bindlessSamplerIndex);
+    }
+
     if (m_sampler) device.destroySampler(m_sampler);
     if (m_ownsResources) {
         if (m_view) device.destroyImageView(m_view);
@@ -44,31 +50,6 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     m_memory = memResult.value;
     (void)device.bindImageMemory(m_image, m_memory, 0);
 
-    vk::BufferCreateInfo stagingBufferInfo({}, imageData.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive);
-    auto stagingResult = device.createBuffer(stagingBufferInfo);
-    if (stagingResult.result != vk::Result::eSuccess) return InternalError("Failed to create staging buffer");
-    vk::Buffer stagingBuffer = stagingResult.value;
-
-    vk::MemoryRequirements stagingMemReq = device.getBufferMemoryRequirements(stagingBuffer);
-    vk::MemoryAllocateInfo stagingAllocInfo(stagingMemReq.size, m_context->findMemoryType(stagingMemReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-    auto stageMemResult = device.allocateMemory(stagingAllocInfo);
-    if (stageMemResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate staging memory");
-    vk::DeviceMemory stagingMemory = stageMemResult.value;
-    (void)device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
-
-    auto mapResult = device.mapMemory(stagingMemory, 0, imageData.pixels.size());
-    if (mapResult.result != vk::Result::eSuccess) return InternalError("Failed to map staging memory");
-    void* data = mapResult.value;
-    memcpy(data, imageData.pixels.data(), imageData.pixels.size());
-    device.unmapMemory(stagingMemory);
-
-    transitionImageLayout(m_image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-    copyBufferToImage(stagingBuffer, m_image, m_width, m_height);
-    transitionImageLayout(m_image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
-    device.destroyBuffer(stagingBuffer);
-    device.freeMemory(stagingMemory);
-
     vk::ImageViewCreateInfo viewInfo;
     viewInfo.image = m_image;
     viewInfo.viewType = vk::ImageViewType::e2D;
@@ -83,7 +64,42 @@ Status VK_Texture::create(const ImageData& imageData, TextureUsage usage) {
     if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create texture view");
     m_view = viewResult.value;
 
-    m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
+    if (m_context->getUploader()) {
+        m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
+        auto status = createSampler();
+        if (status.ok()) {
+            m_context->getUploader()->queueUpload(this, imageData);
+        }
+        return status;
+    } else {
+        vk::BufferCreateInfo stagingBufferInfo({}, imageData.pixels.size(), vk::BufferUsageFlagBits::eTransferSrc, vk::SharingMode::eExclusive);
+        auto stagingResult = device.createBuffer(stagingBufferInfo);
+        if (stagingResult.result != vk::Result::eSuccess) return InternalError("Failed to create staging buffer");
+        vk::Buffer stagingBuffer = stagingResult.value;
+
+        vk::MemoryRequirements stagingMemReq = device.getBufferMemoryRequirements(stagingBuffer);
+        vk::MemoryAllocateInfo stagingAllocInfo(stagingMemReq.size, m_context->findMemoryType(stagingMemReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+        auto stageMemResult = device.allocateMemory(stagingAllocInfo);
+        if (stageMemResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate staging memory");
+        vk::DeviceMemory stagingMemory = stageMemResult.value;
+        (void)device.bindBufferMemory(stagingBuffer, stagingMemory, 0);
+
+        auto mapResult = device.mapMemory(stagingMemory, 0, imageData.pixels.size());
+        if (mapResult.result != vk::Result::eSuccess) return InternalError("Failed to map staging memory");
+        void* data = mapResult.value;
+        memcpy(data, imageData.pixels.data(), imageData.pixels.size());
+        device.unmapMemory(stagingMemory);
+
+        transitionImageLayout(m_image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+        copyBufferToImage(stagingBuffer, m_image, m_width, m_height);
+        transitionImageLayout(m_image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        device.destroyBuffer(stagingBuffer);
+        device.freeMemory(stagingMemory);
+
+        m_bindlessTextureIndex = m_context->getBindlessManager()->registerTexture(m_view);
+        return createSampler();
+    }
     return createSampler();
 }
 Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage) {
@@ -111,27 +127,32 @@ Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format,
     return createSampler();
 }
 
+Status VK_Texture::createDepth(uint32_t width, uint32_t height, vk::Format format) {
+    m_ownsResources = true;
+    auto device = m_context->getDevice();
+    m_width = width;
+    m_height = height;
+    m_format = TextureFormat::RGBA8_UNORM;
+
+    vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, format, {m_width, m_height, 1}, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment);
+    auto imgResult = device.createImage(imageInfo);
+    if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth attachment image");
+    m_image = imgResult.value;
+    vk::MemoryRequirements memReq = device.getImageMemoryRequirements(m_image);
+    auto memResult = device.allocateMemory({memReq.size, m_context->findMemoryType(memReq.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal)});
+    if (memResult.result != vk::Result::eSuccess) return InternalError("Failed to allocate depth attachment memory");
+    m_memory = memResult.value;
+    (void)device.bindImageMemory(m_image, m_memory, 0);
+    vk::ImageViewCreateInfo viewInfo({}, m_image, vk::ImageViewType::e2D, format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1});
+    auto viewResult = device.createImageView(viewInfo);
+    if (viewResult.result != vk::Result::eSuccess) return InternalError("Failed to create depth attachment view");
+    m_view = viewResult.value;
+    return OkStatus();
+}
+
 Status VK_Texture::createSampler() {
-    vk::SamplerCreateInfo samplerInfo;
-    samplerInfo.magFilter = vk::Filter::eLinear;
-    samplerInfo.minFilter = vk::Filter::eLinear;
-    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
-    samplerInfo.anisotropyEnable = VK_FALSE;
-    samplerInfo.maxAnisotropy = 1.0f;
-    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
-    samplerInfo.unnormalizedCoordinates = VK_FALSE;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.compareOp = vk::CompareOp::eAlways;
-    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
-
-    auto samplerResult = m_context->getDevice().createSampler(samplerInfo);
-    if (samplerResult.result != vk::Result::eSuccess) return InternalError("Failed to create sampler");
-    m_sampler = samplerResult.value;
-
-    m_bindlessSamplerIndex = m_context->getBindlessManager()->registerSampler(m_sampler);
-
+    m_sampler = nullptr;
+    m_bindlessSamplerIndex = m_context->getGlobalSamplerBindlessIndex();
     return OkStatus();
 }
 

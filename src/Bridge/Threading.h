@@ -5,9 +5,12 @@
 #include "Vk/VK_Renderer.h"
 #include "thirdparty.h"
 #include "Log.h"
+#include "RenderProxy.h"
 #include <memory>
 
 namespace Nexus {
+
+extern std::atomic<float> g_RenderStats_RenderDrawTime;
 
 class Registry;
 
@@ -29,7 +32,7 @@ struct RenderCommand {
     RenderCommandType type = RenderCommandType::None;
     uint32_t width = 0;
     uint32_t height = 0;
-    Registry* registry = nullptr;
+    RenderSnapshot* snapshot = nullptr;
 };
 
 /**
@@ -43,22 +46,23 @@ public:
 
     void pushCommand(const RenderCommand& cmd) {
         while (!m_queue.push(cmd)) {
-            std::this_thread::yield();
         }
+    }
+
+    size_t getQueueSize() const {
+        return m_queue.size();
     }
 
     void requestSync() {
         m_syncRequested = true;
         pushCommand({RenderCommandType::SyncPoint});
         while (!m_isAtSyncPoint) {
-            std::this_thread::yield();
         }
     }
 
     void resumeSync() {
         m_syncRequested = false;
         while (m_isAtSyncPoint) {
-            std::this_thread::yield();
         }
     }
 
@@ -74,7 +78,6 @@ private:
                 processCommand(cmd);
                 if (cmd.type == RenderCommandType::Shutdown) break;
             } else {
-                std::this_thread::yield();
             }
         }
     }
@@ -82,17 +85,34 @@ private:
     void processCommand(const RenderCommand& cmd) {
         try {
             switch (cmd.type) {
-                case RenderCommandType::Draw:
-                    if (m_renderer) (void)m_renderer->renderFrame(cmd.registry);
+                case RenderCommandType::Draw: {
+                    auto rtStart = std::chrono::high_resolution_clock::now();
+                    if (m_renderer) (void)m_renderer->renderFrame(cmd.snapshot);
+                    auto rtEnd = std::chrono::high_resolution_clock::now();
+                    double duration = std::chrono::duration<double, std::milli>(rtEnd - rtStart).count();
+
+                    static double rtAccum = 0.0;
+                    static int rtFrames = 0;
+                    static auto rtStatStart = rtStart;
+
+                    rtAccum += duration;
+                    rtFrames++;
+
+                    float elapsed = std::chrono::duration<float>(rtEnd - rtStatStart).count();
+                    if (elapsed >= 0.5f) {
+                        g_RenderStats_RenderDrawTime.store((float)(rtAccum / rtFrames), std::memory_order_relaxed);
+                        rtAccum = 0.0;
+                        rtFrames = 0;
+                        rtStatStart = rtEnd;
+                    }
                     break;
+                }
                 case RenderCommandType::Resize:
                     if (m_renderer) (void)m_renderer->onResize(cmd.width, cmd.height);
                     break;
                 case RenderCommandType::SyncPoint:
-                    m_context->sync();
                     m_isAtSyncPoint = true;
                     while (m_syncRequested) {
-                        std::this_thread::yield();
                     }
                     m_isAtSyncPoint = false;
                     break;
@@ -163,7 +183,6 @@ public:
         m_queue.push(cmd);
 
         while (!done) {
-            std::this_thread::yield();
         }
 
         if (resultStatus.ok()) {
@@ -181,7 +200,6 @@ private:
         while (isRunning()) {
             processCommands();
             pumpEvents();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
@@ -209,6 +227,7 @@ private:
             handleCommand(cmd);
         }
     }
+
 
     void handleCommand(WindowCommand& cmd) {
         if (cmd.type == WindowCommandType::Create) {

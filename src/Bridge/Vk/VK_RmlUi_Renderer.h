@@ -34,6 +34,7 @@ public:
     Status createPipeline(uint32_t width, uint32_t height);
     void updateWindowSize(int width, int height);
     void pumpDeferredDestruction();
+    void beginRender();
 
 private:
     Status createPipeline();
@@ -56,6 +57,7 @@ private:
     std::vector<std::unique_ptr<IBuffer>> m_bufferDeletionQueue[3];
     std::vector<ITexture*> m_textureDeletionQueue[3];
     int m_currentFrameIndex = 0;
+    bool m_pipelineBound = false;
 };
 
 } // namespace Nexus

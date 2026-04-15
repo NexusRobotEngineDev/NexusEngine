@@ -32,7 +32,6 @@ private:
                 stepPhysics(static_cast<float>(elapsedTime.count()) / 1000000.0f);
                 lastTime = currentTime;
             } else {
-                std::this_thread::yield();
             }
         }
 

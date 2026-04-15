@@ -33,7 +33,7 @@ Status VK_Buffer::create(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::Me
     }
     m_memory = allocResult.value;
 
-    device.bindBufferMemory(m_buffer, m_memory, 0);
+    (void)device.bindBufferMemory(m_buffer, m_memory, 0);
 
     return OkStatus();
 }
@@ -46,18 +46,23 @@ Status VK_Buffer::uploadData(const void* data, uint64_t size, uint64_t offset) {
     void* mappedData = map();
     if (!mappedData) return InternalError("Failed to map buffer memory");
     memcpy((uint8_t*)mappedData + offset, data, (size_t)size);
-    unmap();
     return OkStatus();
 }
 void* VK_Buffer::map() {
+    if (m_mappedData) return m_mappedData;
     void* data;
     if (m_context->getDevice().mapMemory(m_memory, 0, m_size, {}, &data) != vk::Result::eSuccess) return nullptr;
+    m_mappedData = data;
     return data;
 }
 void VK_Buffer::unmap() {
-    m_context->getDevice().unmapMemory(m_memory);
+    if (m_mappedData) {
+        m_context->getDevice().unmapMemory(m_memory);
+        m_mappedData = nullptr;
+    }
 }
 void VK_Buffer::destroy() {
+    unmap();
     if (m_buffer) {
         m_context->getDevice().destroyBuffer(m_buffer);
         m_buffer = nullptr;

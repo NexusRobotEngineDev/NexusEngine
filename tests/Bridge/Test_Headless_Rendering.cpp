@@ -32,7 +32,7 @@ TEST_F(HeadlessRenderingTest, OffscreenClear) {
     vk::CommandBufferAllocateInfo allocInfo(m_context->getCommandPool(), vk::CommandBufferLevel::ePrimary, 1);
     vk::CommandBuffer vkCmd = device.allocateCommandBuffers(allocInfo).value[0];
     VK_CommandBuffer cmd(vkCmd);
-    cmd.begin();
+    (void)cmd.begin();
     cmd.transitionImageLayout(texture.get(), ImageLayout::Undefined, ImageLayout::ColorAttachmentOptimal);
     RenderingInfo info;
     info.renderArea = {{0, 0}, {width, height}};
@@ -41,10 +41,10 @@ TEST_F(HeadlessRenderingTest, OffscreenClear) {
     cmd.endRendering();
     cmd.transitionImageLayout(texture.get(), ImageLayout::ColorAttachmentOptimal, ImageLayout::TransferSrcOptimal);
     cmd.copyTextureToBuffer(texture.get(), readback.get());
-    cmd.end();
+    (void)cmd.end();
     vk::SubmitInfo submit({}, {}, {}, 1, &vkCmd);
-    m_context->getGraphicsQueue().submit(submit);
-    m_context->getGraphicsQueue().waitIdle();
+    (void)m_context->getGraphicsQueue().submit(submit);
+    (void)m_context->getGraphicsQueue().waitIdle();
     uint8_t* data = (uint8_t*)readback->map();
     EXPECT_EQ(data[0], 0);
     EXPECT_EQ(data[1], 255);

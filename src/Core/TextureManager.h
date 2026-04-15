@@ -5,6 +5,9 @@
 #include <string>
 #include <unordered_map>
 #include <memory>
+#include <mutex>
+#include <vector>
+#include <deque>
 
 namespace Nexus {
 namespace Core {
@@ -38,14 +41,47 @@ public:
     void addTexture(const std::string& key, std::unique_ptr<ITexture> texture);
 
     /**
+     * @brief 移除特定的纹理缓存（进入延迟释放队列）
+     * @param key 缓存键
+     */
+    void removeTexture(const std::string& key);
+
+    /**
+     * @brief 垃圾回收，销毁不再使用的纹理
+     */
+    void performGarbageCollection();
+
+    /**
      * @brief 获取默认纹理（fallback）
      */
     ITexture* getDefaultTexture();
 
+    /**
+     * @brief 获取纯白纹理（适用于没有贴图但只有颜色的材质）
+     */
+    ITexture* getWhiteTexture();
+
 private:
     IContext* m_context;
-    std::unordered_map<std::string, std::unique_ptr<ITexture>> m_textures;
+    IRenderer* m_renderer = nullptr;
+public:
+    void setRenderer(IRenderer* renderer) { m_renderer = renderer; }
+private:
+    std::mutex m_mutex;
+    struct TextureEntry {
+        std::unique_ptr<ITexture> texture;
+        int refCount = 1;
+    };
+    std::unordered_map<std::string, TextureEntry> m_textures;
+
+    struct GcEntry {
+        std::unique_ptr<ITexture> texture;
+        uint64_t targetFrame;
+    };
+    std::vector<GcEntry> m_gcQueue;
+
     std::unique_ptr<ITexture> m_defaultTexture;
+    std::unique_ptr<ITexture> m_whiteTexture;
 };
 
 } // namespace Core

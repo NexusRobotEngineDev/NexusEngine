@@ -125,6 +125,13 @@ public:
         return true;
     }
 
+    size_t size() const {
+        size_t h = m_head.load(std::memory_order_acquire);
+        size_t t = m_tail.load(std::memory_order_acquire);
+        if (h >= t) return h - t;
+        return Size - t + h;
+    }
+
 private:
     T m_data[Size];
     std::atomic<size_t> m_head{0};

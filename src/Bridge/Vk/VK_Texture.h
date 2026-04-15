@@ -21,6 +21,7 @@ public:
      */
     Status create(const ImageData& imageData, TextureUsage usage);
     Status create(uint32_t width, uint32_t height, TextureFormat format, TextureUsage usage);
+    Status createDepth(uint32_t width, uint32_t height, vk::Format format);
     void initializeFromExisting(vk::Image image, vk::ImageView view, vk::Format format, uint32_t width, uint32_t height);
 
     /**
@@ -45,7 +46,11 @@ public:
     vk::Sampler getSampler() const { return m_sampler; }
     vk::Image getImage() const { return m_image; }
 
+    virtual bool isUploading() const override { return m_isUploading.load(); }
+    virtual void setUploading(bool uploading) override { m_isUploading.store(uploading); }
+
 private:
+    std::atomic<bool> m_isUploading{false};
     Status createSampler();
     void transitionImageLayout(vk::Image image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
     void copyBufferToImage(vk::Buffer buffer, vk::Image image, uint32_t width, uint32_t height);

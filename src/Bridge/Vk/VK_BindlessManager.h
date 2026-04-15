@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.hpp>
 #include <vector>
 #include <map>
+#include <mutex>
 
 namespace Nexus {
 
@@ -24,16 +25,19 @@ public:
      */
     uint32_t registerTexture(vk::ImageView view);
 
-    /**
-     * @brief 注册采样器到全局描述符集
-     */
+    void updateTexture(uint32_t index, vk::ImageView newView);
     uint32_t registerSampler(vk::Sampler sampler);
+
+    void unregisterTexture(uint32_t index);
+    void unregisterSampler(uint32_t index);
 
     vk::DescriptorSetLayout getLayout() const { return m_layout; }
     vk::DescriptorSet getSet() const { return m_set; }
 
-    static constexpr uint32_t MAX_TEXTURES = 1024;
-    static constexpr uint32_t MAX_SAMPLERS = 64;
+    static constexpr uint32_t MAX_TEXTURES = 65536;
+    static constexpr uint32_t MAX_SAMPLERS = 65536;
+
+    void updateStorageBuffer(vk::Buffer buffer, vk::DeviceSize size);
 
 private:
     vk::Device m_device;
@@ -43,6 +47,11 @@ private:
 
     uint32_t m_nextTextureIndex = 0;
     uint32_t m_nextSamplerIndex = 0;
+
+    std::vector<uint32_t> m_freeTextureIndices;
+    std::vector<uint32_t> m_freeSamplerIndices;
+
+    std::mutex m_mutex;
 };
 
 } // namespace Nexus

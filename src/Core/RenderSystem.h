@@ -1,3 +1,4 @@
+#pragma once
 #include "Base.h"
 #include "Interfaces.h"
 #include "Components.h"
@@ -31,7 +32,7 @@ public:
     /**
      * @brief 渲染一帧
      */
-    Status renderFrame(Registry* registry = nullptr) override;
+    Status renderFrame(RenderSnapshot* snapshot = nullptr) override;
 
     /**
      * @brief 处理系统事件
@@ -51,6 +52,7 @@ public:
     ITexture* getSwapchainTexture(uint32_t index) override;
     uint32_t acquireNextImage() override;
     void present(uint32_t imageIndex) override;
+    uint64_t getFrameCount() const override;
 
     VK_Renderer* getBridgeRenderer() { return m_bridgeRenderer.get(); }
 

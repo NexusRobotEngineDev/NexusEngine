@@ -53,12 +53,16 @@ public:
         return m_registry.template all_of<Component>(entity);
     }
 
-    /**
-     * @brief 移除组件
-     */
     template<typename Component>
     void remove(entt::entity entity) {
         m_registry.template remove<Component>(entity);
+    }
+
+    /**
+     * @brief 检查实体是否有效
+     */
+    bool valid(entt::entity entity) const {
+        return m_registry.valid(entity);
     }
 
     /**

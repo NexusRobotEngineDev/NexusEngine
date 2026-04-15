@@ -2,5 +2,8 @@ build-windows-debug
 build-windows-release
 build-vs2022-debug
 build-vs2022-release
+build-linux-debug
+build-linux-release
 .idea
 NexusEngine.log
+build

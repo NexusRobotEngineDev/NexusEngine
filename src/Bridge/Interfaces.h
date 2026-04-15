@@ -122,9 +122,12 @@ public:
     virtual TextureFormat getFormat() const = 0;
     virtual uint32_t getBindlessTextureIndex() const { return 0; }
     virtual uint32_t getBindlessSamplerIndex() const { return 0; }
+    virtual bool isUploading() const { return false; }
+    virtual void setUploading(bool uploading) {}
 };
 
 class Registry;
+class RenderSnapshot;
 
 /**
  * @brief 渲染器接口
@@ -133,7 +136,7 @@ class IRenderer {
 public:
     virtual ~IRenderer() = default;
     virtual Status initialize() = 0;
-    virtual Status renderFrame(Registry* registry = nullptr) = 0;
+    virtual Status renderFrame(RenderSnapshot* snapshot = nullptr) = 0;
     virtual void processEvent(const void* event) = 0;
     virtual Status onResize(uint32_t width, uint32_t height) = 0;
     virtual ICommandBuffer* getCurrentCommandBuffer() = 0;
@@ -141,6 +144,13 @@ public:
     virtual uint32_t acquireNextImage() = 0;
     virtual void present(uint32_t imageIndex) = 0;
     virtual void shutdown() = 0;
+    virtual uint64_t getFrameCount() const = 0;
+    virtual void updateMeshletBuffers(
+        const void* meshletsData, size_t meshletsSize,
+        const void* boundsData, size_t boundsSize,
+        const void* verticesData, size_t verticesSize,
+        const void* trianglesData, size_t trianglesSize) {};
+    virtual bool isMeshletPipelineReady() const { return false; }
 };
 
 } // namespace Nexus

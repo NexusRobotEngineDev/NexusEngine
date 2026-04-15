@@ -72,6 +72,21 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++"
       }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "description": "Configures a Release build using Ninja generator and GCC.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -91,6 +106,10 @@
     {
       "name": "build-linux-debug",
       "configurePreset": "linux-clang-debug"
+    },
+    {
+      "name": "build-linux-release",
+      "configurePreset": "linux-gcc-release"
     }
   ]
 }

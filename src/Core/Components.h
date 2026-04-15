@@ -106,10 +106,10 @@ inline std::array<float, 16> multiplyMat4(const std::array<float, 16>& a, const 
 struct CameraComponent {
     float fov = 45.0f;
     float aspect = 1.7777778f;
-    float nearPlane = 0.1f;
-    float farPlane = 1000.0f;
+    float nearPlane = 1.0f;
+    float farPlane = 25484000.0f;
 
-    std::array<float, 3> target = {0.0f, 0.0f, -1.0f};
+    std::array<float, 3> target = {0.0f, 0.0f, 0.0f};
     std::array<float, 3> up = {0.0f, 1.0f, 0.0f};
 
     std::array<float, 16> computeProjectionMatrix() const {
@@ -117,8 +117,8 @@ struct CameraComponent {
         return {
              f / aspect, 0.0f, 0.0f,                               0.0f,
              0.0f,       f,    0.0f,                               0.0f,
-             0.0f,       0.0f, farPlane / (nearPlane - farPlane), -1.0f,
-             0.0f,       0.0f, -(farPlane * nearPlane) / (farPlane - nearPlane), 0.0f
+             0.0f,       0.0f, nearPlane / (farPlane - nearPlane), -1.0f,
+             0.0f,       0.0f, (farPlane * nearPlane) / (farPlane - nearPlane), 0.0f
         };
     }
 
@@ -138,12 +138,20 @@ struct MeshComponent {
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
 
+    uint32_t persistentSlot = 0xFFFFFFFF;
+
     uint32_t albedoTexture = 0;
     uint32_t normalTexture = 0;
     uint32_t metallicRoughnessTexture = 0;
     uint32_t occlusionTexture = 0;
     uint32_t emissiveTexture = 0;
     uint32_t samplerIndex = 0;
+
+    std::array<float, 4> boundingSphere = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    uint32_t meshletOffset = 0xFFFFFFFF;
+    uint32_t meshletCount = 0;
+    bool useMeshShader = false;
 
     std::array<float, 4> albedoFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     float metallicFactor = 1.0f;

@@ -1,9 +1,12 @@
 #pragma once
 #include "VK_BindlessManager.h"
+#include "VK_TextureUploader.h"
 #include "../Interfaces.h"
 #include <vulkan/vulkan.hpp>
 #include <vector>
 #include <string>
+#include <mutex>
+#include <memory>
 
 namespace Nexus {
 
@@ -12,7 +15,7 @@ namespace Nexus {
  */
 class VK_Context : public IContext {
 public:
-    VK_Context(bool enableValidation = true);
+    VK_Context(bool enableValidation = true, bool forceValidation = false);
     virtual ~VK_Context() override;
 
     /**
@@ -43,12 +46,17 @@ public:
     vk::Device getDevice() const { return m_device; }
     vk::PhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     vk::Queue getGraphicsQueue() const { return m_graphicsQueue; }
+    vk::Queue getTransferQueue() const { return m_transferQueue; }
+    bool hasDedicatedTransferQueue() const { return m_hasDedicatedTransferQueue; }
+    std::mutex& getQueueMutex() { return m_queueMutex; }
     vk::Instance getInstance() const { return m_instance; }
     vk::SurfaceKHR getSurface() const { return m_surface; }
     vk::CommandPool getCommandPool() const { return m_commandPool; }
     virtual uint32_t getGraphicsQueueFamilyIndex() const override { return m_graphicsQueueFamilyIndex; }
 
     VK_BindlessManager* getBindlessManager() const { return m_bindlessManager.get(); }
+    VK_TextureUploader* getUploader() const { return m_uploader.get(); }
+
     virtual std::unique_ptr<IBuffer> createBuffer(uint64_t size, uint32_t usage, uint32_t properties) override;
 
     bool isMeshShaderSupported() const { return m_meshShaderSupported; }
@@ -93,12 +101,24 @@ private:
     vk::PhysicalDevice m_physicalDevice;
     vk::Device m_device;
     vk::Queue m_graphicsQueue;
+    vk::Queue m_transferQueue;
+    bool m_hasDedicatedTransferQueue = false;
+    std::mutex m_queueMutex;
     uint32_t m_graphicsQueueFamilyIndex = 0;
     vk::CommandPool m_commandPool;
     std::unique_ptr<VK_BindlessManager> m_bindlessManager;
+    std::unique_ptr<VK_TextureUploader> m_uploader;
 
     IBuffer* m_globalVertexBuffer = nullptr;
     IBuffer* m_globalIndexBuffer = nullptr;
+
+    vk::Sampler m_globalSampler;
+    uint32_t m_globalSamplerIndex = 0xFFFFFFFF;
+    bool m_globalSamplerCreated = false;
+public:
+    inline vk::Sampler getGlobalSampler() const { return m_globalSampler; }
+    inline uint32_t getGlobalSamplerBindlessIndex() const { return m_globalSamplerIndex; }
+private:
 
     const std::vector<const char*> m_validationLayers = {
         "VK_LAYER_KHRONOS_validation"

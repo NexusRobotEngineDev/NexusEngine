@@ -12,9 +12,11 @@ find_package(assimp CONFIG REQUIRED)
 find_package(cppzmq CONFIG REQUIRED)
 find_package(tinyxml2 CONFIG REQUIRED)
 
-target_link_libraries(Core PUBLIC BridgeImpl Bridge nlohmann_json::nlohmann_json assimp::assimp cppzmq tinyxml2::tinyxml2)
+
+target_link_libraries(Core PUBLIC BridgeImpl Bridge nlohmann_json::nlohmann_json assimp::assimp cppzmq tinyxml2::tinyxml2 httplib::httplib Cesium3DTilesSelection CesiumGltf CesiumGltfContent CesiumUtility spdlog::spdlog fmt::fmt meshoptimizer)
 
 target_include_directories(Core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    "${cesium-native_SOURCE_DIR}/extern/meshoptimizer/src"
 )

@@ -8,6 +8,8 @@
 #include "VK_RmlUi_Renderer.h"
 #include <memory>
 #include <string>
+#include <atomic>
+#include <array>
 
 namespace Nexus {
 
@@ -22,44 +24,39 @@ public:
     VK_UIBridge(IContext* context, IRenderer* renderer);
     ~VK_UIBridge();
 
-    /**
-     * @brief 初始化 RmlUi 系统
-     */
     bool initialize(int windowWidth, int windowHeight);
-
-    /**
-     * @brief 销毁 RmlUi 资源
-     */
     void shutdown();
 
-    /**
-     * @brief 更新 UI 逻辑
-     */
-    void update();
+    void lockUI();
+    bool tryLockUI();
+    void unlockUI();
 
     /**
-     * @brief 渲染 UI 几何体
+     * @brief 主线程调用: 处理缓冲事件、执行 Update
      */
-    void render();
+    void updateUI();
 
     /**
-     * @brief 加载 UI 文档
+     * @brief RHI 线程调用: 仅录制渲染命令
      */
+    void renderUI();
+
     Rml::ElementDocument* loadDocument(const std::string& documentPath);
 
 #ifdef ENABLE_SDL
     /**
-     * @brief 处理 SDL 事件
+     * @brief 主线程调用: 缓冲 SDL 事件（不直接操作 RmlUi）
      */
     void processSdlEvent(const SDL_Event& event);
 #endif
 
-    /**
-     * @brief 窗口尺寸改变回调
-     */
     void onResize(int width, int height);
 
+
+
 private:
+    void drainEventQueue();
+
     IContext* m_context;
     IRenderer* m_renderer;
 
@@ -67,6 +64,12 @@ private:
     std::unique_ptr<VK_RmlUi_Renderer> m_renderInterface;
 
     Rml::Context* m_rmlContext = nullptr;
+    std::mutex m_uiMutex;
+
+    static constexpr size_t EVENT_QUEUE_CAP = 512;
+    std::array<SDL_Event, EVENT_QUEUE_CAP> m_eventBuf;
+    std::atomic<size_t> m_eventHead{0};
+    std::atomic<size_t> m_eventTail{0};
 };
 
 } // namespace Nexus

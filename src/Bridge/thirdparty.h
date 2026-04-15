@@ -13,3 +13,16 @@
 #ifdef ENABLE_RMLUI
 #include <RmlUi/Core.h>
 #endif
+
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#endif
+#include <httplib.h>
+
+#ifdef _WIN32
+#undef OPAQUE
+#undef TRANSPARENT
+#undef ERROR
+#endif
+
+

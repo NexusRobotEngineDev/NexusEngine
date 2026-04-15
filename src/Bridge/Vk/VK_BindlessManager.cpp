@@ -12,7 +12,8 @@ VK_BindlessManager::~VK_BindlessManager() {
 Status VK_BindlessManager::initialize() {
     std::vector<vk::DescriptorPoolSize> poolSizes = {
         { vk::DescriptorType::eSampler, MAX_SAMPLERS },
-        { vk::DescriptorType::eSampledImage, MAX_TEXTURES }
+        { vk::DescriptorType::eSampledImage, MAX_TEXTURES },
+        { vk::DescriptorType::eStorageBuffer, 1 }
     };
 
     vk::DescriptorPoolCreateInfo poolInfo;
@@ -26,7 +27,7 @@ Status VK_BindlessManager::initialize() {
     m_pool = poolRes.value;
     NX_CORE_INFO("Bindless Descriptor Pool created successfully.");
 
-    std::vector<vk::DescriptorSetLayoutBinding> bindings(2);
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(3);
     bindings[0].binding = 0;
     bindings[0].descriptorType = vk::DescriptorType::eSampler;
     bindings[0].descriptorCount = MAX_SAMPLERS;
@@ -37,9 +38,15 @@ Status VK_BindlessManager::initialize() {
     bindings[1].descriptorCount = MAX_TEXTURES;
     bindings[1].stageFlags = vk::ShaderStageFlagBits::eAll;
 
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = vk::ShaderStageFlagBits::eAll;
+
     std::vector<vk::DescriptorBindingFlags> bindingFlags = {
         vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind,
-        vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind
+        vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+        vk::DescriptorBindingFlagBits::eUpdateAfterBind
     };
 
     vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo;
@@ -78,7 +85,18 @@ void VK_BindlessManager::shutdown() {
 }
 
 uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
-    uint32_t index = m_nextTextureIndex++;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    uint32_t index = 0;
+    if (!m_freeTextureIndices.empty()) {
+        index = m_freeTextureIndices.back();
+        m_freeTextureIndices.pop_back();
+    } else {
+        if (m_nextTextureIndex >= MAX_TEXTURES) {
+            NX_CORE_ERROR("VK_BindlessManager: Exceeded MAX_TEXTURES ({}). Memory leak detected!", MAX_TEXTURES);
+            return 0;
+        }
+        index = m_nextTextureIndex++;
+    }
 
     vk::DescriptorImageInfo imageInfo;
     imageInfo.imageView = view;
@@ -93,13 +111,22 @@ uint32_t VK_BindlessManager::registerTexture(vk::ImageView view) {
     write.pImageInfo = &imageInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
-    NX_CORE_INFO("[Bindless] Registered Texture View: {}, Index: {}", (void*)view, index);
-
     return index;
 }
 
 uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
-    uint32_t index = m_nextSamplerIndex++;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    uint32_t index = 0;
+    if (!m_freeSamplerIndices.empty()) {
+        index = m_freeSamplerIndices.back();
+        m_freeSamplerIndices.pop_back();
+    } else {
+        if (m_nextSamplerIndex >= MAX_SAMPLERS) {
+            NX_CORE_ERROR("VK_BindlessManager: Exceeded MAX_SAMPLERS ({}). Memory leak detected!", MAX_SAMPLERS);
+            return 0;
+        }
+        index = m_nextSamplerIndex++;
+    }
 
     vk::DescriptorImageInfo samplerInfo;
     samplerInfo.sampler = sampler;
@@ -113,9 +140,57 @@ uint32_t VK_BindlessManager::registerSampler(vk::Sampler sampler) {
     write.pImageInfo = &samplerInfo;
 
     m_device.updateDescriptorSets(1, &write, 0, nullptr);
-    NX_CORE_INFO("[Bindless] Registered Sampler: {}, Index: {}", (void*)sampler, index);
-
     return index;
+}
+
+void VK_BindlessManager::updateTexture(uint32_t index, vk::ImageView newView) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    vk::DescriptorImageInfo imageInfo;
+    imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    imageInfo.imageView = newView;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = m_set;
+    write.dstBinding = 1;
+    write.dstArrayElement = index;
+    write.descriptorType = vk::DescriptorType::eSampledImage;
+    write.descriptorCount = 1;
+    write.pImageInfo = &imageInfo;
+
+    m_device.updateDescriptorSets(1, &write, 0, nullptr);
+}
+
+void VK_BindlessManager::unregisterTexture(uint32_t index) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index > 0 || (index == 0 && m_nextTextureIndex > 0)) {
+        m_freeTextureIndices.push_back(index);
+    }
+}
+
+void VK_BindlessManager::unregisterSampler(uint32_t index) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (index > 0 || (index == 0 && m_nextSamplerIndex > 0)) {
+        m_freeSamplerIndices.push_back(index);
+    }
+}
+
+void VK_BindlessManager::updateStorageBuffer(vk::Buffer buffer, vk::DeviceSize size) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    vk::DescriptorBufferInfo bufferInfo;
+    bufferInfo.buffer = buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = size;
+
+    vk::WriteDescriptorSet write;
+    write.dstSet = m_set;
+    write.dstBinding = 2;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eStorageBuffer;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &bufferInfo;
+
+    m_device.updateDescriptorSets(1, &write, 0, nullptr);
 }
 
 } // namespace Nexus

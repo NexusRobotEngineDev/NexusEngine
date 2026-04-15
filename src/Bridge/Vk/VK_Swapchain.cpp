@@ -64,7 +64,10 @@ Status VK_Swapchain::createSwapchain(uint32_t width, uint32_t height) {
     for (const auto& availablePresentMode : presentModes.value) {
         if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
             presentMode = availablePresentMode;
-            break;
+            break; 
+        }
+        if (availablePresentMode == vk::PresentModeKHR::eImmediate && presentMode != vk::PresentModeKHR::eMailbox) {
+            presentMode = availablePresentMode;
         }
     }
 

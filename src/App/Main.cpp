@@ -5,7 +5,9 @@
 #include "Log.h"
 #include "PhysicsThread.h"
 #include "ResourceLoader.h"
+#include "MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <cmath>
+#include <filesystem>
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -23,9 +25,33 @@
 #include "Core/SceneLoader.h"
 #include "Core/ModelLoader.h"
 #include "Core/TextureManager.h"
+#include "Core/Cesium3DTilesetSystem.h"
+#include "Core/CesiumComponents.h"
+#include <CesiumGeospatial/Cartographic.h>
+#include <CesiumGeospatial/Ellipsoid.h>
+
+
+#if defined(_MSC_VER)
+extern "C" {
+    #include <string.h>
+    #include <stdlib.h>
+    int (__cdecl *__imp_stricmp)(const char *, const char *) = _stricmp;
+    errno_t (__cdecl *__imp__putenv_s)(const char *, const char *) = _putenv_s;
+}
+#endif
 
 using namespace Nexus;
 using namespace Nexus::Core;
+
+std::string g_sceneOverridePath;
+
+namespace Nexus {
+    extern std::atomic<float> g_RenderStats_FPS;
+    extern std::atomic<float> g_RenderStats_FrameTime;
+    extern std::atomic<float> g_RenderStats_LogicTime;
+    extern std::atomic<float> g_RenderStats_RenderSyncTime;
+    extern std::atomic<float> g_RenderStats_RenderPrepTime;
+}
 
 namespace {
 WindowPtr g_window = nullptr;
@@ -86,6 +112,7 @@ struct InputState {
     std::atomic<bool> mouseRightDown{false};
     std::atomic<float> mouseDeltaX{0.0f}, mouseDeltaY{0.0f};
     float yaw{0.0f}, pitch{0.0f};
+    float cameraSpeedMultiplier{1.0f};
 } g_input;
 
 void OnWindowEvent(const void* event) {
@@ -104,9 +131,11 @@ void OnWindowEvent(const void* event) {
 }
 
 void ProcessEventSync(const SDL_Event& sdlEvent) {
-    if (g_renderer) {
-        g_renderer->processEvent(&sdlEvent);
+#ifdef ENABLE_RMLUI
+    if (g_renderer && g_renderer->getBridgeRenderer()->getUIBridge()) {
+        g_renderer->getBridgeRenderer()->getUIBridge()->processSdlEvent(sdlEvent);
     }
+#endif
 
     switch (sdlEvent.type) {
         case SDL_EVENT_KEY_DOWN:
@@ -144,11 +173,18 @@ void ProcessEventSync(const SDL_Event& sdlEvent) {
             }
             break;
         }
+        case SDL_EVENT_MOUSE_WHEEL: {
+            float scrollAmt = sdlEvent.wheel.y;
+            g_input.cameraSpeedMultiplier *= (1.0f + scrollAmt * 0.1f);
+            if (g_input.cameraSpeedMultiplier < 0.01f) g_input.cameraSpeedMultiplier = 0.01f;
+            if (g_input.cameraSpeedMultiplier > 10000000.0f) g_input.cameraSpeedMultiplier = 10000000.0f;
+            break;
+        }
         default: break;
     }
 }
 
-Status InitializeEngine(const EngineConfig& config) {
+Status InitializeEngine(const EngineConfig& config, bool onlineMode, bool disableSensors) {
     g_ecsRegistry = std::make_unique<Registry>();
 
     auto entity = g_ecsRegistry->create();
@@ -190,10 +226,13 @@ Status InitializeEngine(const EngineConfig& config) {
     g_editorUIManager->initialize(g_renderer->getBridgeRenderer()->getUIBridge());
     g_editorUIManager->loadLayout("Data/UI/editor_layout.json");
 
+    NX_CORE_INFO("Main: Initializing TextureManager");
     g_textureManager = std::make_unique<TextureManager>(vkContext);
+    g_textureManager->setRenderer(g_renderer.get());
 #endif
 
-    std::string scenePath = "Data/Scenes/default_scene.json";
+    std::string sceneRelPath = g_sceneOverridePath.empty() ? "Data/Scenes/default_scene.json" : g_sceneOverridePath;
+    std::string scenePath = ResourceLoader::getBasePath() + sceneRelPath;
     auto configResult = SceneLoader::parseSceneFile(scenePath);
     if (!configResult.ok()) {
         NX_CORE_WARN("场景文件加载失败: {}，使用默认配置", configResult.status().message());
@@ -203,11 +242,69 @@ Status InitializeEngine(const EngineConfig& config) {
     g_scene = std::make_unique<Scene>(sceneConfig.sceneName);
 
 #if ENABLE_VULKAN
-    SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
+    NX_CORE_INFO("Main: Calling SceneLoader::createEntities");
+    (void)SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
+
+    NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
+    std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
+    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), static_cast<Core::RenderSystem*>(g_renderer.get()), cesiumCachePath, onlineMode);
+
+    NX_CORE_INFO("Main: Creating Cesium Test Entity");
+    Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
+    auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
+    georef.m_longitude = 121.5;
+    georef.m_latitude = 25.0;
+    georef.m_height = 50.0;
+
+    auto cameraView = g_scene->getRegistry().view<CameraComponent, TransformComponent>();
+    for (auto c : cameraView) {
+        auto& cam = cameraView.get<CameraComponent>(c);
+    }
+
+    auto& tileset = cesiumEnt.addComponent<Cesium3DTileset>();
+    tileset.m_ionAssetId = 2275207;
+    const char* ionToken = getenv("CESIUM_ION_TOKEN");
+    if (ionToken) {
+        tileset.m_ionAccessToken = ionToken;
+    } else {
+        tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YzFmM2RhZC0wZTM1LTQwNTgtOGJhNy00YzQ3MDAyN2IxNjQiLCJpZCI6NDEyMDc2LCJpYXQiOjE3NzUwMTI2ODl9.JFwAvTfQCe8wvmczvyfqbP8BvwxjZ09WLjZpF7U4rhU";
+        NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
+    }
+
+    if (!disableSensors) {
+        entt::entity vsEnt = entt::null;
+        auto view = g_scene->getRegistry().view<TagComponent>();
+        for (auto e : view) {
+            if (view.get<TagComponent>(e).name == "front_camera" || view.get<TagComponent>(e).name == "front_camera_link") {
+                vsEnt = e;
+                break;
+            }
+        }
+        if (vsEnt == entt::null) {
+            NX_CORE_WARN("Vision Sensor: 'front_camera' entity not found! Creating fallback entity.");
+            Entity fallbackEnt = g_scene->createEntity("VisionSensor");
+            fallbackEnt.addComponent<RigidBodyComponent>("front_camera");
+            vsEnt = (entt::entity)fallbackEnt;
+        }
+
+        if (!g_scene->getRegistry().has<TransformComponent>(vsEnt)) {
+            g_scene->getRegistry().emplace<TransformComponent>(vsEnt);
+        }
+
+        if (!g_scene->getRegistry().has<CameraComponent>(vsEnt)) {
+            g_scene->getRegistry().emplace<CameraComponent>(vsEnt);
+        }
+        auto& vsCam = g_scene->getRegistry().get<CameraComponent>(vsEnt);
+        vsCam.fov = 60.0f;
+
+        g_renderer->getBridgeRenderer()->setVisionSensorCamera(vsEnt);
+    }
+
 #else
     SceneLoader::createEntities(sceneConfig, g_scene.get(), nullptr, nullptr);
 #endif
 
+    NX_CORE_INFO("Main: Init Physics System");
     std::string physicsPath;
     g_physicsSystem = new PhysicsSystem();
     auto physicsStatus = g_physicsSystem->initialize();
@@ -217,14 +314,17 @@ Status InitializeEngine(const EngineConfig& config) {
         g_physicsSystem = nullptr;
     } else {
         physicsPath = sceneConfig.robotPhysics.empty() ? "Data/Scenes/go2_mujoco/scene.xml" : "Data/" + sceneConfig.robotPhysics;
+        NX_CORE_INFO("Main: Loading Physics model {}", physicsPath);
         auto loadStatus = g_physicsSystem->loadModel(physicsPath);
         if (!loadStatus.ok()) {
             NX_CORE_WARN("Failed to load drone model: {}", loadStatus.message());
         }
-        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem);
+        g_physicsThread = std::make_unique<PhysicsThread>(g_physicsSystem, 1000.0f);
+        NX_CORE_INFO("Main: Starting PhysicsThread");
         g_physicsThread->startThread();
     }
 
+    NX_CORE_INFO("Main: Starting ROS Bridge");
     g_rosBridge = std::make_unique<RosBridgeSystem>();
     if (auto status = g_rosBridge->initialize(); !status.ok()) {
         NX_CORE_WARN("Failed to start ROS Bridge: {}", status.message());
@@ -244,6 +344,16 @@ Status InitializeEngine(const EngineConfig& config) {
         }
 
         g_rosBridge->setRobotInfo(folderName + "_0", robotName);
+        g_rosBridge->setPhysicsSystem(g_physicsSystem);
+
+        auto* mjPhys = dynamic_cast<MuJoCo_PhysicsSystem*>(g_physicsSystem);
+        if (mjPhys) {
+            auto* bridge = g_rosBridge.get();
+            mjPhys->setStateCallback([bridge](mjModel* m, mjData* d) {
+                bridge->publishPhysicsState(m, d);
+            }, 7);
+            NX_CORE_INFO("已注册物理线程高频状态发布回调 (decimation=7, ~{:.0f}Hz)", 1.0 / (7 * 0.003));
+        }
     }
 
     return OkStatus();
@@ -289,12 +399,196 @@ void ShutdownEngine() {
     g_window = nullptr;
 }
 
+void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
+    auto cameraView = registry.view<CameraComponent, TransformComponent>();
+
+    std::array<float, 16> viewProj = {
+        1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+    };
+
+    uint32_t width = 1280, height = 720;
+    if (g_window) {
+        width = static_cast<SDL_Window_Wrapper*>(g_window)->getWidth();
+        height = static_cast<SDL_Window_Wrapper*>(g_window)->getHeight();
+    }
+
+    bool mainCameraProcessed = false;
+    for (auto entity : cameraView) {
+        auto& camera = cameraView.get<CameraComponent>(entity);
+        auto& transform = cameraView.get<TransformComponent>(entity);
+
+        bool isVisionSensor = false;
+        if (registry.has<TagComponent>(entity)) {
+            std::string name = registry.get<TagComponent>(entity).name;
+            if (name == "VisionSensor" || name == "front_camera" || name == "front_camera_link") {
+                isVisionSensor = true;
+            }
+        }
+
+        if (!isVisionSensor && mainCameraProcessed) {
+            continue;
+        }
+
+        if (isVisionSensor) {
+            camera.aspect = 640.0f / 480.0f;
+        } else {
+            camera.aspect = (float)width / ((float)height + 0.0001f);
+        }
+        auto proj = camera.computeProjectionMatrix();
+
+        float pos[3];
+        if (isVisionSensor) {
+            pos[0] = transform.worldMatrix[12];
+            pos[1] = transform.worldMatrix[13];
+            pos[2] = transform.worldMatrix[14];
+        } else {
+            pos[0] = transform.worldMatrix[12];
+            pos[1] = transform.worldMatrix[13];
+            pos[2] = transform.worldMatrix[14];
+        }
+
+        float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
+        float upVector[3] = { 0.0f, 0.0f, 1.0f };
+        if (!isVisionSensor) {
+            upVector[0] = camera.up[0]; upVector[1] = camera.up[1]; upVector[2] = camera.up[2];
+        } else {
+             float fwd_x = transform.worldMatrix[0];
+             float fwd_y = transform.worldMatrix[1];
+             float fwd_z = transform.worldMatrix[2];
+
+             target[0] = pos[0] + fwd_x;
+             target[1] = pos[1] + fwd_y;
+             target[2] = pos[2] + fwd_z;
+
+             upVector[0] = transform.worldMatrix[8];
+             upVector[1] = transform.worldMatrix[9];
+             upVector[2] = transform.worldMatrix[10];
+        }
+
+        float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
+        float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
+        if (fLen > 1e-5f) { fwd[0]/=fLen; fwd[1]/=fLen; fwd[2]/=fLen; }
+        else { fwd[0]=0; fwd[1]=0; fwd[2]=-1; }
+
+        float right[3] = {
+            fwd[1]*upVector[2] - fwd[2]*upVector[1],
+            fwd[2]*upVector[0] - fwd[0]*upVector[2],
+            fwd[0]*upVector[1] - fwd[1]*upVector[0]
+        };
+        float rLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+        if (rLen > 1e-5f) { right[0]/=rLen; right[1]/=rLen; right[2]/=rLen; }
+        else { right[0]=1; right[1]=0; right[2]=0; }
+
+        float up[3] = {
+            right[1]*fwd[2] - right[2]*fwd[1],
+            right[2]*fwd[0] - right[0]*fwd[2],
+            right[0]*fwd[1] - right[1]*fwd[0]
+        };
+
+        std::array<float, 16> view = {
+            right[0], up[0], -fwd[0], 0.0f,
+            right[1], up[1], -fwd[1], 0.0f,
+            right[2], up[2], -fwd[2], 0.0f,
+            -(right[0]*pos[0] + right[1]*pos[1] + right[2]*pos[2]),
+            -(up[0]*pos[0] + up[1]*pos[1] + up[2]*pos[2]),
+            fwd[0]*pos[0] + fwd[1]*pos[1] + fwd[2]*pos[2],
+            1.0f
+        };
+
+        if (isVisionSensor) {
+            snapshot->visionSensorViewProj = multiplyMat4(proj, view);
+            snapshot->visionSensorValid = true;
+        } else {
+            viewProj = multiplyMat4(proj, view);
+            mainCameraProcessed = true;
+            snapshot->mainCameraPosition = {pos[0], pos[1], pos[2]};
+        }
+    }
+
+    auto meshView = registry.view<MeshComponent, TransformComponent>();
+
+    uint32_t selectedId = 0xFFFFFFFF;
+    bool engineSupportsMeshShaders = false;
+#if ENABLE_VULKAN
+    if (g_renderer) {
+        selectedId = g_renderer->getBridgeRenderer()->m_selectedEntityId.load(std::memory_order_relaxed);
+        engineSupportsMeshShaders = g_renderer->getBridgeRenderer()->isMeshletPipelineReady();
+    }
+#endif
+
+    auto bridgeOuter = g_renderer ? g_renderer->getBridgeRenderer() : nullptr;
+
+    for (auto entity : meshView) {
+        auto& mesh = meshView.get<MeshComponent>(entity);
+        auto& transform = meshView.get<TransformComponent>(entity);
+
+        if (registry.has<CesiumGltfComponent>(entity)) {
+            continue;
+        }
+
+        if (mesh.useMeshShader && mesh.meshletCount > 0 && engineSupportsMeshShaders) {
+            RenderSnapshot::MeshletDrawEntry entry;
+            entry.meshletOffset = mesh.meshletOffset;
+            entry.meshletCount = mesh.meshletCount;
+            entry.vertexBufferOffset = mesh.vertexOffset;
+            entry.worldMatrix = transform.worldMatrix;
+            entry.albedoFactor = mesh.albedoFactor;
+            snapshot->meshletDraws.push_back(entry);
+            snapshot->totalTriangles += mesh.indexCount / 3;
+            snapshot->meshCount++;
+            continue;
+        }
+
+        if (!bridgeOuter) continue;
+
+        if (mesh.persistentSlot == 0xFFFFFFFF) {
+            mesh.persistentSlot = bridgeOuter->allocatePersistentSlot();
+        }
+
+        ObjectData obj = {};
+        obj.textureIndex = mesh.albedoTexture;
+        obj.samplerIndex = mesh.samplerIndex;
+        obj.albedoFactor = mesh.albedoFactor;
+        obj.metallicFactor = mesh.metallicFactor;
+        obj.roughnessFactor = mesh.roughnessFactor;
+        obj.isVisible = 1;
+        obj.worldMatrix = transform.worldMatrix;
+        obj.boundingSphere = mesh.boundingSphere;
+
+        bool isSelected = ((uint32_t)entity == selectedId);
+        if (isSelected) {
+            obj.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
+        } else {
+            obj.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
+        }
+
+        DrawIndexedIndirectCommand cmd;
+        cmd.indexCount = mesh.indexCount;
+        cmd.instanceCount = 1;
+        cmd.firstIndex = mesh.indexOffset;
+        cmd.vertexOffset = mesh.vertexOffset;
+        cmd.firstInstance = mesh.persistentSlot;
+
+        bridgeOuter->updatePersistentSlot(mesh.persistentSlot, obj, cmd);
+
+        snapshot->totalTriangles += mesh.indexCount / 3;
+        snapshot->meshCount++;
+    }
+
+    snapshot->mainCameraViewProj = viewProj;
+}
+
 void RunMainLoop() {
     uint32_t lastWidth = 1280;
     uint32_t lastHeight = 720;
 
+    double accumLogicTime = 0.0;
+    double accumSyncTime = 0.0;
+    double accumPrepTime = 0.0;
+
     std::vector<SDL_Event> localEvents;
     while (!g_quit) {
+        auto logicStartTime = std::chrono::high_resolution_clock::now();
 
         localEvents.clear();
         {
@@ -327,21 +621,72 @@ void RunMainLoop() {
             }
         }
 
+        static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::high_resolution_clock::now();
+        float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
+        lastFrameTime = now;
+
         if (g_scene) {
-            static auto lastFrameTime = std::chrono::high_resolution_clock::now();
-            auto now = std::chrono::high_resolution_clock::now();
-            float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
-            lastFrameTime = now;
+            static auto fpsStartTime = now;
+            static int frameCount = 0;
+            frameCount++;
+            float elapsedFpsTime = std::chrono::duration<float>(now - fpsStartTime).count();
+            if (elapsedFpsTime >= 0.5f) {
+                float fps = frameCount / elapsedFpsTime;
+                float frameTime = (elapsedFpsTime * 1000.0f) / frameCount;
+                float avgLogic = (float)(accumLogicTime / frameCount);
+                float avgSync = (float)(accumSyncTime / frameCount);
+                float avgPrep = (float)(accumPrepTime / frameCount);
+
+                g_RenderStats_FPS.store(fps, std::memory_order_relaxed);
+                g_RenderStats_FrameTime.store(frameTime, std::memory_order_relaxed);
+                g_RenderStats_LogicTime.store(avgLogic, std::memory_order_relaxed);
+                g_RenderStats_RenderSyncTime.store(avgSync, std::memory_order_relaxed);
+                g_RenderStats_RenderPrepTime.store(avgPrep, std::memory_order_relaxed);
+
+                fpsStartTime = now;
+                frameCount = 0;
+                accumLogicTime = 0.0;
+                accumSyncTime = 0.0;
+                accumPrepTime = 0.0;
+            }
+
             if (deltaTime > 0.1f) deltaTime = 0.1f;
 
             auto& registry = g_scene->getRegistry();
             auto view = registry.view<CameraComponent, TransformComponent>();
-            float speed = 5.0f * deltaTime;
             float sensitivity = 0.5f * deltaTime;
 
             for (auto entity : view) {
+                if (registry.has<TagComponent>(entity)) {
+                    std::string name = registry.get<TagComponent>(entity).name;
+                    if (name == "VisionSensor" || name == "front_camera" || name == "front_camera_link") {
+                        continue;
+                    }
+                }
+
                 auto& transform = registry.get<TransformComponent>(entity);
                 auto& camera = registry.get<CameraComponent>(entity);
+
+                double altitude = 5.0;
+                auto tilesetView = registry.view<Cesium3DTileset, CesiumGeoreference>();
+                for (auto tsEntity : tilesetView) {
+                    auto& geoRef = tilesetView.get<CesiumGeoreference>(tsEntity);
+                    if (geoRef.m_localCoordinateSystem) {
+                        glm::dvec3 camEnuPosition(transform.position[0], -transform.position[2], transform.position[1]);
+                        glm::dvec3 ecefPosition = geoRef.m_localCoordinateSystem->localPositionToEcef(camEnuPosition);
+                        auto carto = CesiumGeospatial::Ellipsoid::WGS84.cartesianToCartographic(ecefPosition);
+                        if (carto) {
+                            altitude = carto->height;
+                        }
+
+                        break;
+                    }
+                }
+
+                float safeAltitude = std::max(0.0f, static_cast<float>(altitude));
+                float baseSpeed = std::clamp((safeAltitude * safeAltitude) * 0.005f, 1.0f, 150000.0f);
+                float speed = baseSpeed * deltaTime * g_input.cameraSpeedMultiplier;
 
                 if (g_input.mouseRightDown) {
                     float dx = g_input.mouseDeltaX.exchange(0.0f);
@@ -436,35 +781,86 @@ void RunMainLoop() {
 
 #if ENABLE_VULKAN
         if (g_rhiThread) {
-            g_rhiThread->requestSync();
+            auto logicEndTime = std::chrono::high_resolution_clock::now();
+            accumLogicTime += std::chrono::duration<double, std::milli>(logicEndTime - logicStartTime).count();
+
+            auto syncStartTime = std::chrono::high_resolution_clock::now();
+            while (g_rhiThread->getQueueSize() >= 2) {
+            }
+            auto syncEndTime = std::chrono::high_resolution_clock::now();
+            accumSyncTime += std::chrono::duration<double, std::milli>(syncEndTime - syncStartTime).count();
+
+            auto prepStartTime = std::chrono::high_resolution_clock::now();
+            static float lh = 0, lc = 0, lpu = 0, lu = 0;
             if (g_scene) {
-                if (g_rosBridge && g_physicsSystem) {
-                    g_rosBridge->applyIncomingCommands(g_physicsSystem);
-                }
+                auto t1 = std::chrono::high_resolution_clock::now();
                 HierarchySystem::update(g_scene->getRegistry());
+
+                auto t2 = std::chrono::high_resolution_clock::now();
+                Cesium3DTilesetSystem::update(g_scene->getRegistry(), deltaTime);
+
+                auto t3 = std::chrono::high_resolution_clock::now();
                 RoboticsDynamicsSystem::update(g_scene->getRegistry(), g_physicsSystem);
                 if (g_rosBridge) {
-                    g_rosBridge->publishReplicas(g_scene->getRegistry());
                     if (g_physicsSystem) g_rosBridge->publishModelInfo(g_physicsSystem);
                 }
+                auto t4 = std::chrono::high_resolution_clock::now();
+
+                lh += std::chrono::duration<float, std::milli>(t2 - t1).count();
+                lc += std::chrono::duration<float, std::milli>(t3 - t2).count();
+                lpu += std::chrono::duration<float, std::milli>(t4 - t3).count();
             }
 
-            if (g_editorUIManager) {
-                g_editorUIManager->update(g_scene.get());
+            auto t5 = std::chrono::high_resolution_clock::now();
+            auto* uiBridge = (g_renderer) ? g_renderer->getBridgeRenderer()->getUIBridge() : nullptr;
+            if (uiBridge) {
+                if (uiBridge->tryLockUI()) {
+                    if (g_editorUIManager) {
+                        g_editorUIManager->update(g_scene.get());
+                    }
+                    uiBridge->updateUI();
+                    uiBridge->unlockUI();
+                }
+            }
+            auto prepEndTime = std::chrono::high_resolution_clock::now();
+            lu += std::chrono::duration<float, std::milli>(prepEndTime - t5).count();
+
+            static int p_prep = 0;
+            if (++p_prep >= 60) {
+                NX_CORE_INFO("Logic Profile: Hier={:.2f}ms, Cesium={:.2f}ms, Phys={:.2f}ms, UIMgr={:.2f}ms", lh/60.0f, lc/60.0f, lpu/60.0f, lu/60.0f);
+                lh = 0; lc = 0; lpu = 0; lu = 0; p_prep = 0;
             }
 
-            g_rhiThread->resumeSync();
+            if (g_textureManager) {
+                g_textureManager->performGarbageCollection();
+            }
+
+            accumPrepTime += std::chrono::duration<double, std::milli>(prepEndTime - prepStartTime).count();
+
+            static RenderSnapshot sm_snapshots[4];
+            static uint32_t sm_currentSnapshot = 0;
+
+            RenderSnapshot* activeSnapshot = &sm_snapshots[sm_currentSnapshot];
+            activeSnapshot->clear();
+            if (g_scene) {
+                buildSnapshotFromRegistry(g_scene->getRegistry(), activeSnapshot);
+            }
 
             RenderCommand cmd;
             cmd.type = RenderCommandType::Draw;
-            cmd.registry = g_scene ? &g_scene->getRegistry() : nullptr;
+            cmd.snapshot = activeSnapshot;
             g_rhiThread->pushCommand(cmd);
+
+            sm_currentSnapshot = (sm_currentSnapshot + 1) % 4;
+
+            std::vector<uint8_t> pixels;
+            if (g_renderer && g_renderer->getBridgeRenderer()->getOffscreenPixels(pixels)) {
+                if (g_rosBridge) g_rosBridge->publishImage(pixels, 640, 480);
+            }
         }
 #else
         g_context->sync();
 #endif
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }
 } // namespace
@@ -474,10 +870,22 @@ int main(int argc, char* argv[]) {
     Log::info("Nexus Engine Starting...");
 
     EngineConfig config;
+    std::string sceneArg;
+    bool onlineMode = false;
+    bool disableSensors = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--no-validation") {
+        if (arg == "--validation") {
+            config.enableValidationLayers = true;
+            config.forceValidation = true;
+        } else if (arg == "--no-validation") {
             config.enableValidationLayers = false;
+        } else if (arg == "--online") {
+            onlineMode = true;
+        } else if (arg == "--no-sensors") {
+            disableSensors = true;
+        } else if (arg == "--scene" && i + 1 < argc) {
+            sceneArg = argv[++i];
         }
     }
 
@@ -485,7 +893,34 @@ int main(int argc, char* argv[]) {
         Log::warn("ResourceLoader failed to detect base path: {}", status.message());
     }
 
-    if (auto status = InitializeEngine(config); !status.ok()) {
+    {
+        std::string scenesDir = ResourceLoader::getBasePath() + "Data/Scenes";
+        Log::info("可用场景:");
+        try {
+            for (auto& entry : std::filesystem::directory_iterator(scenesDir)) {
+                if (entry.path().extension() == ".json") {
+                    std::string stem = entry.path().stem().string();
+                    std::string displayName = stem;
+                    auto pos = displayName.find("_scene");
+                    if (pos != std::string::npos) displayName = displayName.substr(0, pos);
+                    Log::info("  --scene {}  ({})", displayName, entry.path().filename().string());
+                }
+            }
+        } catch (...) {}
+    }
+
+    if (!sceneArg.empty()) {
+        std::string candidatePath = "Data/Scenes/" + sceneArg + "_scene.json";
+        std::string fullPath = ResourceLoader::getBasePath() + candidatePath;
+        if (std::filesystem::exists(fullPath)) {
+            g_sceneOverridePath = candidatePath;
+            Log::info("选择场景: {} ({})", sceneArg, candidatePath);
+        } else {
+            Log::warn("场景 '{}' 不存在 (查找: {})", sceneArg, fullPath);
+        }
+    }
+
+    if (auto status = InitializeEngine(config, onlineMode, disableSensors); !status.ok()) {
         Log::critical("Engine init failed: {}", status.message());
         return -1;
     }

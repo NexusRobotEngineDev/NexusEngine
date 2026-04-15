@@ -7,13 +7,23 @@
 #include "../Bridge/Entity.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <mutex>
 
 #ifdef ENABLE_RMLUI
 
 namespace Nexus {
 
+
+
 extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
 extern std::atomic<uint32_t> g_RenderStats_Triangles;
+extern std::atomic<float> g_RenderStats_FPS;
+extern std::atomic<float> g_RenderStats_FrameTime;
+extern std::atomic<float> g_RenderStats_UITime;
+extern std::atomic<float> g_RenderStats_LogicTime;
+extern std::atomic<float> g_RenderStats_RenderSyncTime;
+extern std::atomic<float> g_RenderStats_RenderPrepTime;
+extern std::atomic<float> g_RenderStats_RenderDrawTime;
 
 bool EditorUIManager::initialize(VK_UIBridge* uiBridge) {
     m_uiBridge = uiBridge;
@@ -382,6 +392,32 @@ void EditorUIManager::processUICommands() {
     }
 }
 
+void EditorUIManager::initCachedElements() {
+    if (m_cache.initialized || !m_editorDoc) return;
+    m_cache.hierarchyTree = m_editorDoc->GetElementById("hierarchy-tree");
+    m_cache.entityId = m_editorDoc->GetElementById("prop-entity-id");
+    m_cache.entityName = m_editorDoc->GetElementById("prop-entity-name");
+    m_cache.posX = m_editorDoc->GetElementById("prop-pos-x");
+    m_cache.posY = m_editorDoc->GetElementById("prop-pos-y");
+    m_cache.posZ = m_editorDoc->GetElementById("prop-pos-z");
+    m_cache.rot = m_editorDoc->GetElementById("prop-rot");
+    m_cache.scale = m_editorDoc->GetElementById("prop-scale");
+    m_cache.worldX = m_editorDoc->GetElementById("prop-world-x");
+    m_cache.worldY = m_editorDoc->GetElementById("prop-world-y");
+    m_cache.worldZ = m_editorDoc->GetElementById("prop-world-z");
+    m_cache.parentName = m_editorDoc->GetElementById("prop-parent-name");
+    m_cache.drawCalls = m_editorDoc->GetElementById("prop-draw-calls");
+    m_cache.triangles = m_editorDoc->GetElementById("prop-triangles");
+    m_cache.fps = m_editorDoc->GetElementById("prop-fps");
+    m_cache.frameTime = m_editorDoc->GetElementById("prop-frame-time");
+    m_cache.uiTime = m_editorDoc->GetElementById("prop-ui-time");
+    m_cache.logicTime = m_editorDoc->GetElementById("prop-logic-time");
+    m_cache.renderSyncTime = m_editorDoc->GetElementById("prop-render-sync-time");
+    m_cache.renderPrepTime = m_editorDoc->GetElementById("prop-render-prep-time");
+    m_cache.renderDrawTime = m_editorDoc->GetElementById("prop-render-draw-time");
+    m_cache.initialized = true;
+}
+
 void EditorUIManager::update(Scene* scene) {
     if (!scene) {
         NX_CORE_WARN("EditorUIManager::update called with null scene!");
@@ -392,9 +428,17 @@ void EditorUIManager::update(Scene* scene) {
         return;
     }
     m_currentScene = scene;
+    initCachedElements();
+
+
     processUICommands();
 
-    Rml::Element* treeParent = m_editorDoc->GetElementById("hierarchy-tree");
+    if (++m_updateThrottle < 2) {
+        return;
+    }
+    m_updateThrottle = 0;
+
+    Rml::Element* treeParent = m_cache.hierarchyTree;
     if (treeParent) {
         auto& registry = scene->getRegistry();
         auto view = registry.view<TagComponent>();
@@ -406,9 +450,14 @@ void EditorUIManager::update(Scene* scene) {
         static uint32_t lastSelectedId = 0xFFFFFFFF;
         uint32_t currentSelectedId = m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
 
-        if (currentCount != lastCount) {
+        static auto lastRebuildTime = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        bool timeToRebuild = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRebuildTime).count() > 500;
+
+        if (timeToRebuild && currentCount != lastCount) {
             m_hierarchyDirty = true;
             lastCount = currentCount;
+            lastRebuildTime = now;
         }
 
         if (m_hierarchyDirty) {
@@ -422,10 +471,14 @@ void EditorUIManager::update(Scene* scene) {
                 auto& tag = entity.getComponent<TagComponent>();
 
                 bool hasChildren = false;
+                int childCount = 0;
                 if (entity.hasComponent<HierarchyComponent>()) {
                     auto& hc = entity.getComponent<HierarchyComponent>();
                     hasChildren = !hc.children.empty();
+                    childCount = (int)hc.children.size();
                 }
+
+                bool isCesiumRoot = (tag.name == "CesiumTiles");
 
                 uint32_t entId = static_cast<uint32_t>(ent);
                 bool isExpanded = m_expandedEntities.count(entId) > 0;
@@ -442,16 +495,20 @@ void EditorUIManager::update(Scene* scene) {
                 }
 
                 std::string prefix;
-                if (hasChildren) {
+                if (isCesiumRoot && hasChildren) {
                     prefix = isExpanded ? "[-] " : "[+] ";
+                    nodePtr->SetInnerRML(prefix + tag.name + " (" + std::to_string(childCount) + " tiles)");
+                } else if (hasChildren) {
+                    prefix = isExpanded ? "[-] " : "[+] ";
+                    nodePtr->SetInnerRML(prefix + tag.name);
                 } else {
                     prefix = "    ";
+                    nodePtr->SetInnerRML(prefix + tag.name);
                 }
-                nodePtr->SetInnerRML(prefix + tag.name);
                 nodePtr->SetAttribute("entity-id", std::to_string(entId));
                 treeParent->AppendChild(std::move(nodePtr));
 
-                if (hasChildren && isExpanded) {
+                if (hasChildren && isExpanded && !isCesiumRoot) {
                     auto& hc = entity.getComponent<HierarchyComponent>();
                     for (auto child : hc.children) {
                         if (registry.getInternal().valid(child)) {
@@ -497,44 +554,41 @@ void EditorUIManager::update(Scene* scene) {
         }
     }
 
-    auto* lId = m_editorDoc->GetElementById("prop-entity-id");
-    auto* lName = m_editorDoc->GetElementById("prop-entity-name");
+    auto* lId = m_cache.entityId;
+    auto* lName = m_cache.entityName;
+
+    auto setCachedRML = [](Rml::Element* el, const std::string& text, std::string& cache) {
+        if (el && cache != text) { el->SetInnerRML(text); cache = text; }
+    };
+    static std::string cache_lId, cache_lName, cache_rot, cache_scl, cache_wx, cache_wy, cache_wz, cache_pn;
 
     if (m_selectedEntity.isValid()) {
-        if (lId) lId->SetInnerRML(std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())));
-        if (lName && m_selectedEntity.hasComponent<TagComponent>()) {
-            lName->SetInnerRML(m_selectedEntity.getComponent<TagComponent>().name);
-        }
+        setCachedRML(lId, std::to_string(static_cast<uint32_t>(m_selectedEntity.getHandle())), cache_lId);
+        if (m_selectedEntity.hasComponent<TagComponent>()) setCachedRML(lName, m_selectedEntity.getComponent<TagComponent>().name, cache_lName);
     } else {
-        if (lId) lId->SetInnerRML("-");
-        if (lName) lName->SetInnerRML("None");
+        setCachedRML(lId, "-", cache_lId);
+        setCachedRML(lName, "None", cache_lName);
 
-        auto* px = m_editorDoc->GetElementById("prop-pos-x");
-        auto* py = m_editorDoc->GetElementById("prop-pos-y");
-        auto* pz = m_editorDoc->GetElementById("prop-pos-z");
+        auto* px = m_cache.posX;
+        auto* py = m_cache.posY;
+        auto* pz = m_cache.posZ;
         if (px && !px->IsClassSet("focused")) px->SetAttribute("value", "");
         if (py && !py->IsClassSet("focused")) py->SetAttribute("value", "");
         if (pz && !pz->IsClassSet("focused")) pz->SetAttribute("value", "");
 
-        auto* rot = m_editorDoc->GetElementById("prop-rot");
-        auto* scl = m_editorDoc->GetElementById("prop-scale");
-        auto* wx = m_editorDoc->GetElementById("prop-world-x");
-        auto* wy = m_editorDoc->GetElementById("prop-world-y");
-        auto* wz = m_editorDoc->GetElementById("prop-world-z");
-        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
-        if (rot) rot->SetInnerRML("-");
-        if (scl) scl->SetInnerRML("-");
-        if (wx) wx->SetInnerRML("-");
-        if (wy) wy->SetInnerRML("-");
-        if (wz) wz->SetInnerRML("-");
-        if (pn) pn->SetInnerRML("-");
+        setCachedRML(m_cache.rot, "-", cache_rot);
+        setCachedRML(m_cache.scale, "-", cache_scl);
+        setCachedRML(m_cache.worldX, "-", cache_wx);
+        setCachedRML(m_cache.worldY, "-", cache_wy);
+        setCachedRML(m_cache.worldZ, "-", cache_wz);
+        setCachedRML(m_cache.parentName, "-", cache_pn);
     }
 
     if (m_selectedEntity.isValid() && m_selectedEntity.hasComponent<TransformComponent>()) {
         auto& transform = m_selectedEntity.getComponent<TransformComponent>();
-        auto* px = m_editorDoc->GetElementById("prop-pos-x");
-        auto* py = m_editorDoc->GetElementById("prop-pos-y");
-        auto* pz = m_editorDoc->GetElementById("prop-pos-z");
+        auto* px = m_cache.posX;
+        auto* py = m_cache.posY;
+        auto* pz = m_cache.posZ;
 
         if (px && py && pz && !px->IsClassSet("focused") && !py->IsClassSet("focused") && !pz->IsClassSet("focused")) {
             char buf[32];
@@ -543,59 +597,99 @@ void EditorUIManager::update(Scene* scene) {
             snprintf(buf, sizeof(buf), "%.4f", transform.position[2]); pz->SetAttribute("value", std::string(buf));
         }
 
-        auto* rot = m_editorDoc->GetElementById("prop-rot");
-        if (rot) {
+        if (m_cache.rot) {
             char buf[96];
-            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)",
-                transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]);
-            rot->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f, %.3f)", transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]);
+            setCachedRML(m_cache.rot, buf, cache_rot);
         }
 
-        auto* scl = m_editorDoc->GetElementById("prop-scale");
-        if (scl) {
+        if (m_cache.scale) {
             char buf[64];
-            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)",
-                transform.scale[0], transform.scale[1], transform.scale[2]);
-            scl->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "(%.3f, %.3f, %.3f)", transform.scale[0], transform.scale[1], transform.scale[2]);
+            setCachedRML(m_cache.scale, buf, cache_scl);
         }
 
-        auto* wx = m_editorDoc->GetElementById("prop-world-x");
-        auto* wy = m_editorDoc->GetElementById("prop-world-y");
-        auto* wz = m_editorDoc->GetElementById("prop-world-z");
-        if (wx && wy && wz) {
+        if (m_cache.worldX && m_cache.worldY && m_cache.worldZ) {
             char buf[32];
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); wx->SetInnerRML(buf);
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[13]); wy->SetInnerRML(buf);
-            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); wz->SetInnerRML(buf);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[12]); setCachedRML(m_cache.worldX, buf, cache_wx);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[13]); setCachedRML(m_cache.worldY, buf, cache_wy);
+            snprintf(buf, sizeof(buf), "%.4f", transform.worldMatrix[14]); setCachedRML(m_cache.worldZ, buf, cache_wz);
         }
 
-        auto* pn = m_editorDoc->GetElementById("prop-parent-name");
-        if (pn) {
+        if (m_cache.parentName) {
             if (m_selectedEntity.hasComponent<HierarchyComponent>()) {
                 auto& hc = m_selectedEntity.getComponent<HierarchyComponent>();
                 if (hc.parent != entt::null && m_currentScene) {
                     Entity parentEnt(hc.parent, &m_currentScene->getRegistry());
                     if (parentEnt.hasComponent<TagComponent>()) {
-                        pn->SetInnerRML(parentEnt.getComponent<TagComponent>().name);
+                        setCachedRML(m_cache.parentName, parentEnt.getComponent<TagComponent>().name, cache_pn);
                     } else {
-                        pn->SetInnerRML("(id: " + std::to_string((uint32_t)hc.parent) + ")");
+                        setCachedRML(m_cache.parentName, "(id: " + std::to_string((uint32_t)hc.parent) + ")", cache_pn);
                     }
                 } else {
-                    pn->SetInnerRML("(root)");
+                    setCachedRML(m_cache.parentName, "(root)", cache_pn);
                 }
             } else {
-                pn->SetInnerRML("(none)");
+                setCachedRML(m_cache.parentName, "(none)", cache_pn);
             }
         }
     }
 
-    auto* drawCallsEl = m_editorDoc->GetElementById("prop-draw-calls");
-    auto* trianglesEl = m_editorDoc->GetElementById("prop-triangles");
+    auto* drawCallsEl = m_cache.drawCalls;
+    auto* trianglesEl = m_cache.triangles;
     if (drawCallsEl) {
-        drawCallsEl->SetInnerRML(std::to_string(g_RenderStats_DrawCalls.load(std::memory_order_relaxed)));
+        std::string s = std::to_string(g_RenderStats_DrawCalls.load(std::memory_order_relaxed));
+        if (drawCallsEl->GetInnerRML() != s) drawCallsEl->SetInnerRML(s);
     }
     if (trianglesEl) {
-        trianglesEl->SetInnerRML(std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed)));
+        std::string s = std::to_string(g_RenderStats_Triangles.load(std::memory_order_relaxed));
+        if (trianglesEl->GetInnerRML() != s) trianglesEl->SetInnerRML(s);
+    }
+
+    auto* fpsEl = m_cache.fps;
+    auto* frameTimeEl = m_cache.frameTime;
+    if (fpsEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.1f", g_RenderStats_FPS.load(std::memory_order_relaxed));
+        if (fpsEl->GetInnerRML() != buf) fpsEl->SetInnerRML(buf);
+    }
+    if (frameTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_FrameTime.load(std::memory_order_relaxed));
+        if (frameTimeEl->GetInnerRML() != buf) frameTimeEl->SetInnerRML(buf);
+    }
+
+    auto* uiTimeEl = m_cache.uiTime;
+    if (uiTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_UITime.load(std::memory_order_relaxed));
+        if (uiTimeEl->GetInnerRML() != buf) uiTimeEl->SetInnerRML(buf);
+    }
+
+    auto* logicTimeEl = m_cache.logicTime;
+    auto* rsTimeEl = m_cache.renderSyncTime;
+    auto* prepTimeEl = m_cache.renderPrepTime;
+    auto* drawTimeEl = m_cache.renderDrawTime;
+
+    if (logicTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_LogicTime.load(std::memory_order_relaxed));
+        if (logicTimeEl->GetInnerRML() != buf) logicTimeEl->SetInnerRML(buf);
+    }
+    if (rsTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderSyncTime.load(std::memory_order_relaxed));
+        if (rsTimeEl->GetInnerRML() != buf) rsTimeEl->SetInnerRML(buf);
+    }
+    if (prepTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderPrepTime.load(std::memory_order_relaxed));
+        if (prepTimeEl->GetInnerRML() != buf) prepTimeEl->SetInnerRML(buf);
+    }
+    if (drawTimeEl) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.2f ms", g_RenderStats_RenderDrawTime.load(std::memory_order_relaxed));
+        if (drawTimeEl->GetInnerRML() != buf) drawTimeEl->SetInnerRML(buf);
     }
 }
 

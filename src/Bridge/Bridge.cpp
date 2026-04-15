@@ -8,7 +8,7 @@ namespace Nexus {
  * @return 返回上下文指针
  */
 ContextPtr CreateContext(const EngineConfig& config) {
-    return new VK_Context(config.enableValidationLayers);
+    return new VK_Context(config.enableValidationLayers, config.forceValidation);
 }
 #else
 /**

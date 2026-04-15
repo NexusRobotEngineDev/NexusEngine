@@ -1,10 +1,12 @@
 #include "VK_Renderer.h"
 #include "VK_ShaderCompiler.h"
+#include "VK_BindlessManager.h"
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
 
 namespace Nexus {
+
 
 std::atomic<uint32_t> g_RenderStats_DrawCalls{0};
 std::atomic<uint32_t> g_RenderStats_Triangles{0};
@@ -53,15 +55,56 @@ void VK_Renderer::shutdown() {
         m_device.destroyPipelineLayout(m_pipelineLayout);
         m_pipelineLayout = nullptr;
     }
+
+    if (m_offscreenReadbackMapped) {
+        m_offscreenReadbackMapped = nullptr;
+    }
+    m_offscreenReadback.reset();
+    m_offscreenDepth.reset();
+    m_offscreenColor.reset();
+
+    if (m_cullPipeline) {
+        m_device.destroyPipeline(m_cullPipeline);
+        m_cullPipeline = nullptr;
+    }
+    if (m_cullPipelineLayout) {
+        m_device.destroyPipelineLayout(m_cullPipelineLayout);
+        m_cullPipelineLayout = nullptr;
+    }
+    if (m_cullSetLayout) {
+        m_device.destroyDescriptorSetLayout(m_cullSetLayout);
+        m_cullSetLayout = nullptr;
+    }
+    if (m_cullDescriptorPool) {
+        m_device.destroyDescriptorPool(m_cullDescriptorPool);
+        m_cullDescriptorPool = nullptr;
+    }
+
+    m_objectDataBuffer.reset();
+    m_persistentCommandBuffer.reset();
+    m_countBuffer.reset();
+    m_indirectBuffers.clear();
 }
 
 Status VK_Renderer::initialize() {
+    NX_CORE_INFO("VK_Renderer::initialize - 1: createCommandPool");
     if (auto status = createCommandPool(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 2: createGraphicsPipeline");
     if (auto status = createGraphicsPipeline(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 2.5: createComputePipeline");
+    if (auto status = createComputePipeline(); !status.ok()) return status;
+    if (m_context->isMeshShaderSupported()) {
+        NX_CORE_INFO("VK_Renderer::initialize - 2.6: createMeshletPipeline");
+        if (auto status = createMeshletPipeline(); !status.ok()) {
+            NX_CORE_WARN("Meshlet pipeline creation failed, mesh shader culling disabled: {}", status.message());
+        }
+    }
+    NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
     if (auto status = createSyncObjects(); !status.ok()) return status;
+    NX_CORE_INFO("VK_Renderer::initialize - 5: createSwapchainTextures");
     if (auto status = createSwapchainTextures(); !status.ok()) return status;
-
     ImageData imageData;
     auto imageRes = ResourceLoader::loadImage("Data/Textures/test.png");
     if (imageRes.ok()) {
@@ -82,23 +125,68 @@ Status VK_Renderer::initialize() {
     m_whiteTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_whiteTexture->create(whiteData, TextureUsage::Sampled));
 
+    NX_CORE_INFO("VK_Renderer::initialize - 6: create default textures");
     m_testTexture = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_testTexture->create(imageData, TextureUsage::Sampled));
 
-    m_indirectBuffer = std::make_unique<VK_IndirectBuffer>(m_context);
-    DrawIndirectCommand drawCmd;
-    drawCmd.vertexCount = 3;
-    drawCmd.instanceCount = 1;
-    drawCmd.firstVertex = 0;
-    drawCmd.firstInstance = 0;
+    NX_CORE_INFO("VK_Renderer::initialize - 6.1: createOffscreenResources");
+    if (auto status = createOffscreenResources(); !status.ok()) return status;
 
-    std::vector<DrawIndirectCommand> commands = { drawCmd };
-    NX_RETURN_IF_ERROR(m_indirectBuffer->uploadDrawCommands(commands));
+    NX_CORE_INFO("VK_Renderer::initialize - 7: alloc indirect buffers");
+    m_indirectBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    size_t objCap = 100000;
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_indirectBuffers[i] = std::make_unique<VK_IndirectBuffer>(m_context);
+        NX_RETURN_IF_ERROR(m_indirectBuffers[i]->create(objCap * sizeof(DrawIndexedIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eDeviceLocal));
+    }
 
+    NX_CORE_INFO("VK_Renderer::initialize - 8: alloc objectDataBuffer");
+    m_objectDataBuffer = std::make_unique<VK_Buffer>(m_context);
+    NX_RETURN_IF_ERROR(m_objectDataBuffer->create(MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    m_persistentCommandBuffer = std::make_unique<VK_Buffer>(m_context);
+    NX_RETURN_IF_ERROR(m_persistentCommandBuffer->create(MAX_FRAMES_IN_FLIGHT * objCap * sizeof(DrawIndexedIndirectCommand), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+
+    m_countBuffer = std::make_unique<VK_Buffer>(m_context);
+    NX_RETURN_IF_ERROR(m_countBuffer->create(MAX_FRAMES_IN_FLIGHT * sizeof(uint32_t), vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndirectBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal));
+
+    NX_CORE_INFO("VK_Renderer::initialize - 9: updateStorageBuffer in BindlessManager");
+    m_context->getBindlessManager()->updateStorageBuffer(m_objectDataBuffer->getHandle(), MAX_FRAMES_IN_FLIGHT * objCap * sizeof(ObjectData));
+
+    NX_CORE_INFO("VK_Renderer::initialize - 9.1: Update Cull Descriptor Sets");
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vk::DescriptorBufferInfo inCmdInfo(m_persistentCommandBuffer->getHandle(), i * objCap * sizeof(DrawIndexedIndirectCommand), objCap * sizeof(DrawIndexedIndirectCommand));
+        vk::DescriptorBufferInfo outCmdInfo(m_indirectBuffers[i]->getHandle(), 0, objCap * sizeof(DrawIndexedIndirectCommand));
+        vk::DescriptorBufferInfo countInfo(m_countBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+
+        std::array<vk::WriteDescriptorSet, 3> writes{};
+        writes[0].dstSet = m_cullDescriptorSets[i];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo = &inCmdInfo;
+
+        writes[1].dstSet = m_cullDescriptorSets[i];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[1].descriptorCount = 1;
+        writes[1].pBufferInfo = &outCmdInfo;
+
+        writes[2].dstSet = m_cullDescriptorSets[i];
+        writes[2].dstBinding = 2;
+        writes[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[2].descriptorCount = 1;
+        writes[2].pBufferInfo = &countInfo;
+
+        m_device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
+    NX_CORE_INFO("VK_Renderer::initialize - 10: RML UI Init");
 #ifdef ENABLE_RMLUI
     m_uiBridge = std::make_unique<VK_UIBridge>(m_context, this);
     m_uiBridge->initialize(m_swapchain->getExtent().width, m_swapchain->getExtent().height);
 #endif
+
+    NX_CORE_INFO("VK_Renderer::initialize - DONE");
 
     return OkStatus();
 }
@@ -115,9 +203,61 @@ Status VK_Renderer::createSwapchainTextures() {
     return OkStatus();
 }
 
+Status VK_Renderer::createOffscreenResources() {
+    m_offscreenColor = std::make_unique<VK_Texture>(m_context);
+    TextureFormat offscreenFormat = (m_swapchain->getImageFormat() == vk::Format::eB8G8R8A8Unorm)
+        ? TextureFormat::BGRA8_UNORM : TextureFormat::RGBA8_UNORM;
+    NX_RETURN_IF_ERROR(m_offscreenColor->create(m_offscreenExtent.width, m_offscreenExtent.height, offscreenFormat, TextureUsage::Attachment));
+
+    m_offscreenDepth = std::make_unique<VK_Texture>(m_context);
+    NX_RETURN_IF_ERROR(m_offscreenDepth->createDepth(m_offscreenExtent.width, m_offscreenExtent.height, m_swapchain->getDepthFormat()));
+
+    m_offscreenReadback = std::make_unique<VK_Buffer>(m_context);
+    size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
+    NX_RETURN_IF_ERROR(m_offscreenReadback->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached));
+    m_offscreenReadbackMapped = m_offscreenReadback->map();
+
+    return OkStatus();
+}
+
 ITexture* VK_Renderer::getSwapchainTexture(uint32_t index) {
     if (index >= m_swapchainTextures.size()) return nullptr;
     return m_swapchainTextures[index].get();
+}
+
+uint32_t VK_Renderer::allocatePersistentSlot() {
+    if (!m_freeSlots.empty()) {
+        uint32_t slot = m_freeSlots.back();
+        m_freeSlots.pop_back();
+        return slot;
+    }
+    uint32_t nextSlot = m_maxEntityIndex.fetch_add(1, std::memory_order_relaxed);
+    return nextSlot;
+}
+
+void VK_Renderer::freePersistentSlot(uint32_t slot) {
+    ObjectData emptyObj = {};
+    emptyObj.isVisible = 0;
+    DrawIndexedIndirectCommand emptyCmd = {};
+    updatePersistentSlot(slot, emptyObj, emptyCmd);
+
+    m_freeSlots.push_back(slot);
+}
+
+void VK_Renderer::updatePersistentSlot(uint32_t slot, const ObjectData& obj, const DrawIndexedIndirectCommand& cmd) {
+    PersistentSlotUpdate update;
+    update.slot = slot;
+    update.obj = obj;
+    update.cmd = cmd;
+    m_slotUpdateQueue.push(update);
+}
+
+void VK_Renderer::setPersistentSlotVisibility(uint32_t slot, bool visible) {
+    PersistentSlotUpdate update;
+    update.slot = slot;
+    update.type = 1; // 1 means visibility update only
+    update.obj.isVisible = visible ? 1 : 0;
+    m_slotUpdateQueue.push(update);
 }
 
 Status VK_Renderer::createGraphicsPipeline() {
@@ -182,14 +322,14 @@ Status VK_Renderer::createGraphicsPipeline() {
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = vk::PolygonMode::eFill;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = vk::CullModeFlagBits::eNone;
+    rasterizer.cullMode = vk::CullModeFlagBits::eBack;
     rasterizer.frontFace = vk::FrontFace::eCounterClockwise;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
     depthStencilState.depthTestEnable = VK_TRUE;
     depthStencilState.depthWriteEnable = VK_TRUE;
-    depthStencilState.depthCompareOp = vk::CompareOp::eLess;
+    depthStencilState.depthCompareOp = vk::CompareOp::eGreaterOrEqual;
     depthStencilState.depthBoundsTestEnable = VK_FALSE;
     depthStencilState.stencilTestEnable = VK_FALSE;
     depthStencilState.minDepthBounds = 0.0f;
@@ -223,7 +363,7 @@ Status VK_Renderer::createGraphicsPipeline() {
     vk::PushConstantRange pushConstantRange;
     pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(BindlessConstants);
+    pushConstantRange.size = 80;
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
     pipelineLayoutInfo.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
@@ -276,6 +416,201 @@ Status VK_Renderer::createGraphicsPipeline() {
     m_device.destroyShaderModule(vertShaderModule);
 
 
+    return OkStatus();
+}
+
+Status VK_Renderer::createComputePipeline() {
+    std::string csCode;
+    NX_ASSIGN_OR_RETURN(csCode, ResourceLoader::loadTextFile("Data/Shaders/Cull.hlsl"));
+
+    vk::ShaderModule compShaderModule;
+    NX_ASSIGN_OR_RETURN(compShaderModule, VK_ShaderCompiler::compileLayer(m_device, csCode, "CSMain", shaderc_compute_shader));
+
+    vk::PipelineShaderStageCreateInfo compShaderStageInfo;
+    compShaderStageInfo.stage = vk::ShaderStageFlagBits::eCompute;
+    compShaderStageInfo.module = compShaderModule;
+    compShaderStageInfo.pName = "CSMain";
+
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(3);
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, static_cast<uint32_t>(bindings.size()), bindings.data());
+
+    auto layoutRes = m_device.createDescriptorSetLayout(layoutInfo);
+    if (layoutRes.result != vk::Result::eSuccess) return InternalError("Failed to create cull descriptor set layout");
+    m_cullSetLayout = layoutRes.value;
+
+    std::vector<vk::DescriptorSetLayout> setLayouts = {
+        m_context->getBindlessManager()->getLayout(),
+        m_cullSetLayout
+    };
+
+    vk::PushConstantRange pushConstantRange;
+    pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(uint32_t) * 3;
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, static_cast<uint32_t>(setLayouts.size()), setLayouts.data(), 1, &pushConstantRange);
+
+    if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_cullPipelineLayout) != vk::Result::eSuccess) {
+        return InternalError("Failed to create compute pipeline layout");
+    }
+
+    vk::ComputePipelineCreateInfo pipelineInfo({}, compShaderStageInfo, m_cullPipelineLayout);
+
+    auto result = m_device.createComputePipeline(nullptr, pipelineInfo);
+    if (result.result != vk::Result::eSuccess) {
+        return InternalError("Failed to create compute pipeline");
+    }
+    m_cullPipeline = result.value;
+
+    m_device.destroyShaderModule(compShaderModule);
+
+    std::vector<vk::DescriptorPoolSize> poolSizes = {
+        { vk::DescriptorType::eStorageBuffer, 3 * MAX_FRAMES_IN_FLIGHT }
+    };
+    vk::DescriptorPoolCreateInfo poolInfo({}, MAX_FRAMES_IN_FLIGHT, static_cast<uint32_t>(poolSizes.size()), poolSizes.data());
+    auto poolRes = m_device.createDescriptorPool(poolInfo);
+    if (poolRes.result != vk::Result::eSuccess) return InternalError("Failed to create cull descriptor pool");
+    m_cullDescriptorPool = poolRes.value;
+
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_cullSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo(m_cullDescriptorPool, static_cast<uint32_t>(layouts.size()), layouts.data());
+    auto allocRes = m_device.allocateDescriptorSets(allocInfo);
+    if (allocRes.result != vk::Result::eSuccess) return InternalError("Failed to allocate cull descriptor sets");
+    m_cullDescriptorSets = allocRes.value;
+
+    return OkStatus();
+}
+
+Status VK_Renderer::createMeshletPipeline() {
+    std::string hlslCode;
+    NX_ASSIGN_OR_RETURN(hlslCode, ResourceLoader::loadTextFile("Data/Shaders/MeshletCull.hlsl"));
+
+    vk::ShaderModule taskModule;
+    NX_ASSIGN_OR_RETURN(taskModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "ASMain", shaderc_task_shader));
+
+    vk::ShaderModule meshModule;
+    NX_ASSIGN_OR_RETURN(meshModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "MSMain", shaderc_mesh_shader));
+
+    vk::ShaderModule fragModule;
+    NX_ASSIGN_OR_RETURN(fragModule, VK_ShaderCompiler::compileLayer(m_device, hlslCode, "PSMain", shaderc_fragment_shader));
+
+    std::vector<vk::DescriptorSetLayoutBinding> bindings(6);
+    for (int i = 0; i < 6; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT;
+    }
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, static_cast<uint32_t>(bindings.size()), bindings.data());
+    auto layoutRes = m_device.createDescriptorSetLayout(layoutInfo);
+    if (layoutRes.result != vk::Result::eSuccess) return InternalError("Failed to create meshlet descriptor set layout");
+    m_meshletSetLayout = layoutRes.value;
+
+    std::vector<vk::DescriptorSetLayout> setLayouts = {
+        m_context->getBindlessManager()->getLayout(),
+        m_meshletSetLayout
+    };
+
+    struct MeshletPushGlobalParamsCPU {
+        float viewProj[16];
+        float cameraPos[3];
+        float _pad0;
+    };
+
+    vk::PushConstantRange pushRange;
+    pushRange.stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(MeshletPushGlobalParamsCPU);
+
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, static_cast<uint32_t>(setLayouts.size()), setLayouts.data(), 1, &pushRange);
+    if (m_device.createPipelineLayout(&pipelineLayoutInfo, nullptr, &m_meshletPipelineLayout) != vk::Result::eSuccess) {
+        return InternalError("Failed to create meshlet pipeline layout");
+    }
+
+    vk::Format colorFormat = m_swapchain->getImageFormat();
+    vk::Format depthFormat = m_swapchain->getDepthFormat();
+    if (depthFormat == vk::Format::eUndefined) depthFormat = vk::Format::eD32Sfloat;
+
+    vk::PipelineRenderingCreateInfo renderingCreateInfo;
+    renderingCreateInfo.colorAttachmentCount = 1;
+    renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
+    renderingCreateInfo.depthAttachmentFormat = depthFormat;
+
+    std::vector<vk::PipelineShaderStageCreateInfo> stages;
+    stages.push_back({{}, vk::ShaderStageFlagBits::eTaskEXT, taskModule, "ASMain"});
+    stages.push_back({{}, vk::ShaderStageFlagBits::eMeshEXT, meshModule, "MSMain"});
+    stages.push_back({{}, vk::ShaderStageFlagBits::eFragment, fragModule, "PSMain"});
+
+    vk::PipelineViewportStateCreateInfo viewportState({}, 1, nullptr, 1, nullptr);
+    vk::PipelineRasterizationStateCreateInfo rasterizer({}, VK_FALSE, VK_FALSE, vk::PolygonMode::eFill,
+        vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise, VK_FALSE, 0.0f, 0.0f, 0.0f, 1.0f);
+
+    vk::PipelineDepthStencilStateCreateInfo depthStencilState{};
+    depthStencilState.depthTestEnable = VK_TRUE;
+    depthStencilState.depthWriteEnable = VK_TRUE;
+    depthStencilState.depthCompareOp = vk::CompareOp::eGreaterOrEqual;
+
+    vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1);
+    vk::PipelineColorBlendAttachmentState colorBlendAttachment;
+    colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    vk::PipelineColorBlendStateCreateInfo colorBlending({}, VK_FALSE, vk::LogicOp::eCopy, 1, &colorBlendAttachment);
+
+    std::vector<vk::DynamicState> dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+    vk::PipelineDynamicStateCreateInfo dynamicState({}, dynamicStates);
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo;
+    pipelineInfo.pNext = &renderingCreateInfo;
+    pipelineInfo.stageCount = static_cast<uint32_t>(stages.size());
+    pipelineInfo.pStages = stages.data();
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencilState;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = m_meshletPipelineLayout;
+
+    auto result = m_device.createGraphicsPipeline(nullptr, pipelineInfo);
+    if (result.result != vk::Result::eSuccess) {
+        return InternalError("Failed to create meshlet graphics pipeline");
+    }
+    m_meshletPipeline = result.value;
+
+    m_device.destroyShaderModule(taskModule);
+    m_device.destroyShaderModule(meshModule);
+    m_device.destroyShaderModule(fragModule);
+
+    std::vector<vk::DescriptorPoolSize> poolSizes = {
+        {vk::DescriptorType::eStorageBuffer, 6}
+    };
+    vk::DescriptorPoolCreateInfo poolInfo({}, 1, static_cast<uint32_t>(poolSizes.size()), poolSizes.data());
+    auto poolRes = m_device.createDescriptorPool(poolInfo);
+    if (poolRes.result != vk::Result::eSuccess) return InternalError("Failed to create meshlet descriptor pool");
+    m_meshletDescriptorPool = poolRes.value;
+
+    vk::DescriptorSetAllocateInfo allocInfo(m_meshletDescriptorPool, 1, &m_meshletSetLayout);
+    auto allocRes = m_device.allocateDescriptorSets(allocInfo);
+    if (allocRes.result != vk::Result::eSuccess) return InternalError("Failed to allocate meshlet descriptor set");
+    m_meshletDescriptorSet = allocRes.value[0];
+
+    NX_CORE_INFO("Meshlet pipeline created successfully");
+    m_meshletPipelineReady = true;
     return OkStatus();
 }
 
@@ -333,22 +668,58 @@ Status VK_Renderer::createSyncObjects() {
     return OkStatus();
 }
 
-void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, Registry* registry) {
-    vk::CommandBufferBeginInfo beginInfo;
+void VK_Renderer::recordComputeCulling(vk::CommandBuffer commandBuffer) {
+    uint32_t activeEntitiesCount = m_maxEntityIndex.load(std::memory_order_relaxed);
+    if (activeEntitiesCount > 0) {
+        commandBuffer.fillBuffer(m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t), sizeof(uint32_t), 0);
 
-    if (commandBuffer.begin(&beginInfo) != vk::Result::eSuccess) {
-        return;
+        vk::BufferMemoryBarrier countBarrier;
+        countBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        countBarrier.dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        countBarrier.buffer = m_countBuffer->getHandle();
+        countBarrier.offset = m_currentFrame * sizeof(uint32_t);
+        countBarrier.size = sizeof(uint32_t);
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eComputeShader, {}, 0, nullptr, 1, &countBarrier, 0, nullptr);
+
+        commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, m_cullPipeline);
+        vk::DescriptorSet cullSets[] = { m_context->getBindlessManager()->getSet(), m_cullDescriptorSets[m_currentFrame] };
+        commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, m_cullPipelineLayout, 0, 2, cullSets, 0, nullptr);
+        struct CullPushParams {
+            uint32_t maxEntities;
+            uint32_t frameIndex;
+            uint32_t frameOffset;
+        };
+        CullPushParams cullParams = {};
+        cullParams.maxEntities = activeEntitiesCount;
+        cullParams.frameIndex = m_currentFrame;
+        cullParams.frameOffset = m_currentFrame * 100000;
+
+        commandBuffer.pushConstants<CullPushParams>(m_cullPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, cullParams);
+
+        commandBuffer.dispatch((activeEntitiesCount + 63) / 64, 1, 1);
+
+        vk::BufferMemoryBarrier indirectBarrier;
+        indirectBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        indirectBarrier.dstAccessMask = vk::AccessFlagBits::eIndirectCommandRead;
+        indirectBarrier.buffer = m_indirectBuffers[m_currentFrame]->getHandle();
+        indirectBarrier.offset = 0;
+        indirectBarrier.size = VK_WHOLE_SIZE;
+
+        vk::BufferMemoryBarrier countReadBarrier;
+        countReadBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        countReadBarrier.dstAccessMask = vk::AccessFlagBits::eIndirectCommandRead;
+        countReadBarrier.buffer = m_countBuffer->getHandle();
+        countReadBarrier.offset = m_currentFrame * sizeof(uint32_t);
+        countReadBarrier.size = sizeof(uint32_t);
+
+        vk::BufferMemoryBarrier cullBarriers[] = { indirectBarrier, countReadBarrier };
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eDrawIndirect, {}, 0, nullptr, 2, cullBarriers, 0, nullptr);
     }
+}
 
+void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t imageIndex, RenderSnapshot* snapshot) {
     vk::Extent2D extent = m_swapchain->getExtent();
-
-    if (!registry) {
-        static bool registryWarned = false;
-        if (!registryWarned) {
-            NX_CORE_ERROR("Renderer: registry is NULL, skipping mesh rendering!");
-            registryWarned = true;
-        }
-    }
+    uint32_t activeEntitiesCount = m_maxEntityIndex.load(std::memory_order_relaxed);
 
     vk::ImageMemoryBarrier colorBarrier;
     colorBarrier.srcAccessMask = {};
@@ -387,7 +758,7 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
     depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
     depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
-    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(0.0f, 0);
 
     vk::RenderingInfo renderingInfo;
     renderingInfo.renderArea = vk::Rect2D({0, 0}, extent);
@@ -417,164 +788,149 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     scissor.extent = extent;
     commandBuffer.setScissor(0, 1, &scissor);
 
-    if (registry) {
-        std::array<float, 16> viewProj = {
-            1,0,0,0,
-            0,1,0,0,
-            0,0,1,0,
-            0,0,0,1
-        };
+    auto t_draw0 = std::chrono::high_resolution_clock::now();
 
-        auto cameraView = registry->view<CameraComponent, TransformComponent>();
-        for (auto entity : cameraView) {
-            auto& camera = cameraView.get<CameraComponent>(entity);
-            auto& transform = cameraView.get<TransformComponent>(entity);
+    if (snapshot) {
+        static int logCounter = 0;
+        bool shouldLog = (logCounter++ % 600 == 0);
 
-            camera.aspect = (float)extent.width / (float)extent.height;
-
-            auto proj = camera.computeProjectionMatrix();
-
-            float pos[3] = { transform.position[0], transform.position[1], transform.position[2] };
-            float target[3] = { camera.target[0], camera.target[1], camera.target[2] };
-            float upVector[3] = { camera.up[0], camera.up[1], camera.up[2] };
-
-            float fwd[3] = { target[0] - pos[0], target[1] - pos[1], target[2] - pos[2] };
-            float fLen = std::sqrt(fwd[0]*fwd[0] + fwd[1]*fwd[1] + fwd[2]*fwd[2]);
-            if (fLen > 1e-5f) { fwd[0]/=fLen; fwd[1]/=fLen; fwd[2]/=fLen; }
-            else { fwd[0]=0; fwd[1]=0; fwd[2]=-1; }
-
-            float right[3] = {
-                fwd[1]*upVector[2] - fwd[2]*upVector[1],
-                fwd[2]*upVector[0] - fwd[0]*upVector[2],
-                fwd[0]*upVector[1] - fwd[1]*upVector[0]
+        size_t objCap = 100000;
+        uint32_t frameOffset = m_currentFrame * objCap;
+        if (activeEntitiesCount > 0) {
+            struct PushParams {
+                uint32_t frameOffset;
+                uint32_t useCustomVP;
+                float pad[2];
+                std::array<float, 16> customViewProj;
             };
-            float rLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
-            if (rLen > 1e-5f) { right[0]/=rLen; right[1]/=rLen; right[2]/=rLen; }
-            else { right[0]=1; right[1]=0; right[2]=0; }
-
-            float up[3] = {
-                right[1]*fwd[2] - right[2]*fwd[1],
-                right[2]*fwd[0] - right[0]*fwd[2],
-                right[0]*fwd[1] - right[1]*fwd[0]
-            };
-
-            std::array<float, 16> view = {
-                right[0], up[0], -fwd[0], 0.0f,
-                right[1], up[1], -fwd[1], 0.0f,
-                right[2], up[2], -fwd[2], 0.0f,
-                -(right[0]*pos[0] + right[1]*pos[1] + right[2]*pos[2]),
-                -(up[0]*pos[0] + up[1]*pos[1] + up[2]*pos[2]),
-                fwd[0]*pos[0] + fwd[1]*pos[1] + fwd[2]*pos[2],
-                1.0f
-            };
-
-            viewProj = multiplyMat4(proj, view);
-
-            static int camLogCounter = 0;
-            if (camLogCounter++ % 600 == 0) {
-                NX_CORE_INFO("Camera Debug:");
-                NX_CORE_INFO("  Pos: ({}, {}, {})", transform.position[0], transform.position[1], transform.position[2]);
-                NX_CORE_INFO("  View[12..14]: {}, {}, {}", view[12], view[13], view[14]);
-                NX_CORE_INFO("  Proj[10..11]: {}, {}", proj[10], proj[11]);
-                NX_CORE_INFO("  Proj[14..15]: {}, {}", proj[14], proj[15]);
+            PushParams params = {};
+            params.frameOffset = m_currentFrame * 100000;
+            params.useCustomVP = 1;
+            if (snapshot) {
+                params.customViewProj = snapshot->mainCameraViewProj;
+            } else {
+                params.customViewProj = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
             }
-            break;
+
+            vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
+            commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
+            commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
+
+            auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+            auto globalIBO = static_cast<VK_Buffer*>(m_context->getGlobalIndexBuffer());
+
+            if (globalVBO && globalIBO) {
+                vk::Buffer vertexBuffers[] = { globalVBO->getHandle() };
+                vk::DeviceSize offsets[] = { 0 };
+                commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+                commandBuffer.bindIndexBuffer(globalIBO->getHandle(), 0, vk::IndexType::eUint32);
+
+                commandBuffer.drawIndexedIndirectCount(
+                    m_indirectBuffers[m_currentFrame]->getHandle(), 0,
+                    m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t),
+                    activeEntitiesCount, sizeof(DrawIndexedIndirectCommand)
+                );
+            }
         }
 
-        auto meshView = registry->view<MeshComponent, TransformComponent>();
+        if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
 
-        IBuffer* vb = m_context->getGlobalVertexBuffer();
-        IBuffer* ib = m_context->getGlobalIndexBuffer();
+            if (m_meshletBuffer) {
+                struct MeshletPushGlobalParamsCPU {
+                    float viewProj[16];
+                    float cameraPos[3];
+                    uint32_t frameOffset;
+                };
 
-        if (vb && ib) {
-            vk::Buffer vertexBuffers[] = { static_cast<VK_Buffer*>(vb)->getHandle() };
-            vk::DeviceSize offsets[] = { 0 };
-            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
-            commandBuffer.bindIndexBuffer(static_cast<VK_Buffer*>(ib)->getHandle(), 0, vk::IndexType::eUint32);
-
-            static int logCounter = 0;
-            bool shouldLog = (logCounter++ % 600 == 0);
-
-            size_t meshCount = 0;
-            uint32_t totalTriangles = 0;
-            uint32_t selectedId = m_selectedEntityId.load(std::memory_order_relaxed);
-            for (auto entity : meshView) {
-                auto& mesh = meshView.get<MeshComponent>(entity);
-                auto& transform = meshView.get<TransformComponent>(entity);
-
-                std::array<float, 16> mvp = multiplyMat4(viewProj, transform.worldMatrix);
-
-                if (shouldLog) {
-                    std::string eName = "Unknown";
-                    if (registry->has<TagComponent>(entity)) {
-                        eName = registry->get<TagComponent>(entity).name;
-                    }
-                    NX_CORE_INFO("Drawing Component: entityID={} (Name={}), indexCount={}, vOffset={}, worldPos=({},{},{})",
-                                 (uint32_t)entity, eName, mesh.indexCount, mesh.vertexOffset,
-                                 transform.position[0], transform.position[1], transform.position[2]);
-                    NX_CORE_INFO("MVP Matrix (Col-Major):");
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[0], mvp[4], mvp[8], mvp[12]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[1], mvp[5], mvp[9], mvp[13]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[2], mvp[6], mvp[10], mvp[14]);
-                    NX_CORE_INFO("  [{}, {}, {}, {}]", mvp[3], mvp[7], mvp[11], mvp[15]);
+                size_t maxDraws = 100000;
+                if (!m_meshletInstanceBuffer) {
+                    m_meshletInstanceBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletInstanceBuffer->create(MAX_FRAMES_IN_FLIGHT * maxDraws * sizeof(MeshletInstanceData), vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    
+                    m_meshletIndirectBuffer = std::make_unique<VK_Buffer>(m_context);
+                    m_meshletIndirectBuffer->create(MAX_FRAMES_IN_FLIGHT * maxDraws * sizeof(vk::DrawMeshTasksIndirectCommandEXT), vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+                    
+                    vk::DescriptorBufferInfo instInfo(m_meshletInstanceBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+                    vk::WriteDescriptorSet write{};
+                    write.dstSet = m_meshletDescriptorSet;
+                    write.dstBinding = 5;
+                    write.dstArrayElement = 0;
+                    write.descriptorCount = 1;
+                    write.descriptorType = vk::DescriptorType::eStorageBuffer;
+                    write.pBufferInfo = &instInfo;
+                    m_device.updateDescriptorSets(1, &write, 0, nullptr);
                 }
 
-                BindlessConstants constants = {};
-                if (mesh.albedoTexture < VK_BindlessManager::MAX_TEXTURES) {
-                    constants.textureIndex = mesh.albedoTexture;
-                } else {
-                    constants.textureIndex = m_whiteTexture->getBindlessTextureIndex();
+                std::vector<MeshletInstanceData> instanceData(snapshot->meshletDraws.size());
+                std::vector<vk::DrawMeshTasksIndirectCommandEXT> indirectCmds(snapshot->meshletDraws.size());
+
+                for (size_t i = 0; i < snapshot->meshletDraws.size(); i++) {
+                    const auto& draw = snapshot->meshletDraws[i];
+                    instanceData[i].meshletOffset = draw.meshletOffset;
+                    instanceData[i].meshletCount = draw.meshletCount;
+                    instanceData[i].vertexBufferOffset = draw.vertexBufferOffset;
+                    instanceData[i]._pad0 = 0;
+                    memcpy(instanceData[i].worldMatrix.data(), draw.worldMatrix.data(), sizeof(float)*16);
+                    memcpy(instanceData[i].albedoFactor.data(), draw.albedoFactor.data(), sizeof(float)*4);
+                    
+                    indirectCmds[i].groupCountX = (draw.meshletCount + 31) / 32;
+                    indirectCmds[i].groupCountY = 1;
+                    indirectCmds[i].groupCountZ = 1;
                 }
 
-                if (mesh.samplerIndex < VK_BindlessManager::MAX_SAMPLERS) {
-                    constants.samplerIndex = mesh.samplerIndex;
-                } else {
-                    constants.samplerIndex = m_whiteTexture->getBindlessSamplerIndex();
+                size_t frameOffset = m_currentFrame * maxDraws;
+                size_t instOffset = frameOffset * sizeof(MeshletInstanceData);
+                size_t cmdOffset = frameOffset * sizeof(vk::DrawMeshTasksIndirectCommandEXT);
+
+                m_meshletInstanceBuffer->uploadData(instanceData.data(), instanceData.size() * sizeof(MeshletInstanceData), instOffset);
+                m_meshletIndirectBuffer->uploadData(indirectCmds.data(), indirectCmds.size() * sizeof(vk::DrawMeshTasksIndirectCommandEXT), cmdOffset);
+
+                commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_meshletPipeline);
+                vk::DescriptorSet sets[] = {m_context->getBindlessManager()->getSet(), m_meshletDescriptorSet};
+                commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_meshletPipelineLayout, 0, 2, sets, 0, nullptr);
+                
+                MeshletPushGlobalParamsCPU params = {};
+                memcpy(params.viewProj, snapshot->mainCameraViewProj.data(), sizeof(float) * 16);
+                memcpy(params.cameraPos, snapshot->mainCameraPosition.data(), sizeof(float) * 3);
+                params.frameOffset = (uint32_t)frameOffset;
+
+                commandBuffer.pushConstants<MeshletPushGlobalParamsCPU>(m_meshletPipelineLayout,
+                    vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment,
+                    0, params);
+
+                static auto pfnDrawMeshTasksIndirect = (PFN_vkCmdDrawMeshTasksIndirectEXT)
+                    vkGetDeviceProcAddr(m_device, "vkCmdDrawMeshTasksIndirectEXT");
+                if (pfnDrawMeshTasksIndirect) {
+                    pfnDrawMeshTasksIndirect(commandBuffer, m_meshletIndirectBuffer->getHandle(), cmdOffset, (uint32_t)indirectCmds.size(), sizeof(vk::DrawMeshTasksIndirectCommandEXT));
                 }
-
-                constants.albedoFactor = mesh.albedoFactor;
-                constants.metallicFactor = mesh.metallicFactor;
-                constants.roughnessFactor = mesh.roughnessFactor;
-
-                constants.mvp = mvp;
-
-                bool isSelected = ((uint32_t)entity == selectedId);
-                if (isSelected) {
-                    constants.highlightColor = {1.0f, 0.6f, 0.1f, 0.35f};
-                } else {
-                    constants.highlightColor = {0.0f, 0.0f, 0.0f, 0.0f};
-                }
-
-                commandBuffer.pushConstants<BindlessConstants>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, constants);
-
-                commandBuffer.drawIndexed(mesh.indexCount, 1, mesh.indexOffset, mesh.vertexOffset, 0);
-                meshCount++;
-                totalTriangles += mesh.indexCount / 3;
-            }
-
-            g_RenderStats_DrawCalls.store((uint32_t)meshCount, std::memory_order_relaxed);
-            g_RenderStats_Triangles.store(totalTriangles, std::memory_order_relaxed);
-
-            if (shouldLog) {
-                NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", meshCount, totalTriangles);
-            }
-        } else {
-            static bool bufferWarned = false;
-            if (!bufferWarned) {
-                NX_CORE_WARN("Rendering skipped: Global VertexBuffer({}) or IndexBuffer({}) is NULL!", (void*)vb, (void*)ib);
-                bufferWarned = true;
             }
         }
-    } else {
+
+        g_RenderStats_DrawCalls.store(snapshot->meshCount, std::memory_order_relaxed);
+        g_RenderStats_Triangles.store(snapshot->totalTriangles, std::memory_order_relaxed);
+
+        if (shouldLog) {
+            NX_CORE_INFO("Recorded {} mesh draw calls ({} triangles) in this command buffer.", snapshot->meshCount, snapshot->totalTriangles);
+        }
     }
 
+    auto t_ui0 = std::chrono::high_resolution_clock::now();
 #ifdef ENABLE_RMLUI
     if (m_uiBridge) {
-        m_uiBridge->render();
+        m_uiBridge->renderUI();
     }
 #endif
-
     commandBuffer.endRendering();
+    auto t_ui1 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame3 = 0;
+    static float s_ui = 0, s_draw = 0;
+    s_draw += std::chrono::duration<float, std::milli>(t_ui0 - t_draw0).count();
+    s_ui += std::chrono::duration<float, std::milli>(t_ui1 - t_ui0).count();
+    if (++p_frame3 >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: CMD_Draw={:.2f}ms, UI={:.2f}ms", s_draw/60.0f, s_ui/60.0f);
+        p_frame3 = 0; s_ui = 0; s_draw = 0;
+    }
 
     colorBarrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
     colorBarrier.dstAccessMask = {};
@@ -582,8 +938,165 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
     colorBarrier.newLayout = vk::ImageLayout::ePresentSrcKHR;
 
     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eBottomOfPipe, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+}
 
-    (void)commandBuffer.end();
+void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, RenderSnapshot* snapshot) {
+    if (!snapshot) return;
+
+    m_offscreenReady = false;
+
+
+    vk::ImageMemoryBarrier colorBarrier;
+    colorBarrier.srcAccessMask = {};
+    colorBarrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.oldLayout = vk::ImageLayout::eUndefined;
+    colorBarrier.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorBarrier.image = m_offscreenColor->getImage();
+    colorBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    colorBarrier.subresourceRange.baseMipLevel = 0;
+    colorBarrier.subresourceRange.levelCount = 1;
+    colorBarrier.subresourceRange.baseArrayLayer = 0;
+    colorBarrier.subresourceRange.layerCount = 1;
+
+    vk::ImageMemoryBarrier depthBarrier = colorBarrier;
+    depthBarrier.dstAccessMask = vk::AccessFlagBits::eDepthStencilAttachmentWrite;
+    depthBarrier.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthBarrier.image = m_offscreenDepth->getImage();
+    depthBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+
+    vk::ImageMemoryBarrier barriers[] = { colorBarrier, depthBarrier };
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                                  vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests,
+                                  {}, 0, nullptr, 0, nullptr, 2, barriers);
+
+    vk::RenderingAttachmentInfo colorAttachment;
+    colorAttachment.imageView = m_offscreenColor->getView();
+    colorAttachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    colorAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    colorAttachment.clearValue = vk::ClearValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+
+    vk::RenderingAttachmentInfo depthAttachment;
+    depthAttachment.imageView = m_offscreenDepth->getView();
+    depthAttachment.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eStore;
+    depthAttachment.clearValue.depthStencil = vk::ClearDepthStencilValue(0.0f, 0);
+
+    vk::RenderingInfo renderingInfo;
+    renderingInfo.renderArea = vk::Rect2D({0, 0}, m_offscreenExtent);
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+    renderingInfo.pDepthAttachment = &depthAttachment;
+
+    commandBuffer.beginRendering(&renderingInfo);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, m_graphicsPipeline);
+
+    vk::Viewport viewport;
+    viewport.x = 0.0f;
+    viewport.y = (float)m_offscreenExtent.height;
+    viewport.width = (float)m_offscreenExtent.width;
+    viewport.height = -(float)m_offscreenExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    commandBuffer.setViewport(0, 1, &viewport);
+
+    vk::Rect2D scissor;
+    scissor.offset = vk::Offset2D(0, 0);
+    scissor.extent = m_offscreenExtent;
+    commandBuffer.setScissor(0, 1, &scissor);
+
+
+    struct PushParams {
+        uint32_t frameOffset;
+        uint32_t useCustomVP;
+        float pad[2];
+        std::array<float, 16> customViewProj;
+    };
+    PushParams params = {};
+    params.frameOffset = m_currentFrame * 100000;
+
+    if (snapshot->visionSensorValid) {
+        params.useCustomVP = 1;
+        params.customViewProj = snapshot->visionSensorViewProj;
+    } else {
+        params.useCustomVP = 0;
+    }
+
+    vk::DescriptorSet descSet = m_context->getBindlessManager()->getSet();
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, m_pipelineLayout, 0, 1, &descSet, 0, nullptr);
+    commandBuffer.pushConstants<PushParams>(m_pipelineLayout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, params);
+
+    uint32_t activeEntitiesCount = m_maxEntityIndex.load(std::memory_order_relaxed);
+    if (activeEntitiesCount > 0) {
+        auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+        auto globalIBO = static_cast<VK_Buffer*>(m_context->getGlobalIndexBuffer());
+
+        if (globalVBO && globalIBO) {
+            vk::Buffer vertexBuffers[] = { globalVBO->getHandle() };
+            vk::DeviceSize offsets[] = { 0 };
+            commandBuffer.bindVertexBuffers(0, 1, vertexBuffers, offsets);
+            commandBuffer.bindIndexBuffer(globalIBO->getHandle(), 0, vk::IndexType::eUint32);
+
+            commandBuffer.drawIndexedIndirectCount(
+                m_indirectBuffers[m_currentFrame]->getHandle(), 0,
+                m_countBuffer->getHandle(), m_currentFrame * sizeof(uint32_t),
+                activeEntitiesCount, sizeof(DrawIndexedIndirectCommand)
+            );
+        }
+    }
+
+    commandBuffer.endRendering();
+
+    colorBarrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    colorBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+    colorBarrier.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    colorBarrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eTransfer, {}, 0, nullptr, 0, nullptr, 1, &colorBarrier);
+
+    vk::BufferImageCopy region;
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = vk::Offset3D{0, 0, 0};
+    region.imageExtent = vk::Extent3D{m_offscreenExtent.width, m_offscreenExtent.height, 1};
+
+    commandBuffer.copyImageToBuffer(m_offscreenColor->getImage(), vk::ImageLayout::eTransferSrcOptimal, m_offscreenReadback->getHandle(), 1, &region);
+
+    vk::BufferMemoryBarrier bufBarrier;
+    bufBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+    bufBarrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
+    bufBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bufBarrier.buffer = m_offscreenReadback->getHandle();
+    bufBarrier.offset = 0;
+    bufBarrier.size = VK_WHOLE_SIZE;
+
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 0, nullptr, 1, &bufBarrier, 0, nullptr);
+
+    m_offscreenReady = true;
+}
+
+bool VK_Renderer::getOffscreenPixels(std::vector<uint8_t>& outPixels) {
+    if (!m_offscreenReady || !m_offscreenReadbackMapped) return false;
+
+    vk::MappedMemoryRange range;
+    range.memory = m_offscreenReadback->getMemory();
+    range.offset = 0;
+    range.size = VK_WHOLE_SIZE;
+    (void)m_device.invalidateMappedMemoryRanges(1, &range);
+
+    size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
+    outPixels.resize(size);
+    memcpy(outPixels.data(), m_offscreenReadbackMapped, size);
+    return true;
 }
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
@@ -612,37 +1125,85 @@ Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
 void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
-Status VK_Renderer::renderFrame(Registry* registry) {
-#ifdef ENABLE_RMLUI
-    if (m_uiBridge && m_swapchain->getExtent().width > 0 && m_swapchain->getExtent().height > 0) {
-        SDL_Event evt;
-        while (m_eventQueue.pop(evt)) {
-            m_uiBridge->processSdlEvent(evt);
-        }
-        m_uiBridge->update();
-    }
-#endif
+Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
-    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, registry);
+
+    if (snapshot) {
+        uploadSnapshotData(snapshot);
+    }
+
+    vk::CommandBufferBeginInfo beginInfo;
+    if (m_commandBuffers[m_currentFrame].begin(&beginInfo) != vk::Result::eSuccess) {
+        return InternalError("Failed to begin cmd buffer");
+    }
+
+    uint32_t activeCount = m_maxEntityIndex.load(std::memory_order_relaxed);
+    if (activeCount > 0 && m_objectDataBuffer && m_persistentCommandBuffer) {
+        size_t objCap = 100000;
+        size_t objOffset = (m_currentFrame * objCap) * sizeof(ObjectData);
+        size_t cmdOffset = (m_currentFrame * objCap) * sizeof(DrawIndexedIndirectCommand);
+
+        if (m_localObjectData.size() < activeCount) {
+            m_localObjectData.resize(activeCount, ObjectData{});
+            m_localIndirectCommands.resize(activeCount, DrawIndexedIndirectCommand{});
+        }
+
+        PersistentSlotUpdate update;
+        while (m_slotUpdateQueue.pop(update)) {
+            if (update.slot >= m_localObjectData.size()) {
+                m_localObjectData.resize(update.slot + 1000, ObjectData{});
+                m_localIndirectCommands.resize(update.slot + 1000, DrawIndexedIndirectCommand{});
+            }
+            if (update.type == 0) {
+                m_localObjectData[update.slot] = update.obj;
+                m_localIndirectCommands[update.slot] = update.cmd;
+            } else if (update.type == 1) {
+                m_localObjectData[update.slot].isVisible = update.obj.isVisible;
+            }
+        }
+
+        m_objectDataBuffer->uploadData(m_localObjectData.data(), activeCount * sizeof(ObjectData), objOffset);
+        m_persistentCommandBuffer->uploadData(m_localIndirectCommands.data(), activeCount * sizeof(DrawIndexedIndirectCommand), cmdOffset);
+    }
+
+    recordComputeCulling(m_commandBuffers[m_currentFrame]);
+
+    if (m_visionSensorEntity != entt::null && snapshot) {
+        recordOffscreenCommandBuffer(m_commandBuffers[m_currentFrame], snapshot);
+    }
+
+    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
+
+    (void)m_commandBuffers[m_currentFrame].end();
+
     endFrame(imageIndex);
     return OkStatus();
 }
 
 
 void VK_Renderer::processEvent(const void* event) {
-#ifdef ENABLE_RMLUI
-    if (event) {
-        m_eventQueue.push(*static_cast<const SDL_Event*>(event));
-    }
-#endif
+    (void)event;
 }
 
 Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
+    auto t0 = std::chrono::high_resolution_clock::now();
     if (m_device.waitForFences(1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
         return InternalError("Wait for fences failed");
     }
+    auto t1 = std::chrono::high_resolution_clock::now();
     vk::Result acquireResult = m_device.acquireNextImageKHR(m_swapchain->getHandle(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], vk::Fence(), &imageIndex);
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame2 = 0;
+    static float s_fence = 0, s_acq = 0;
+    s_fence += std::chrono::duration<float, std::milli>(t1 - t0).count();
+    s_acq += std::chrono::duration<float, std::milli>(t2 - t1).count();
+    if (++p_frame2 >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: waitForFences={:.2f}ms, acquireNextImage={:.2f}ms", s_fence/60.0f, s_acq/60.0f);
+        p_frame2 = 0; s_fence = 0; s_acq = 0;
+    }
+
     if (acquireResult == vk::Result::eErrorOutOfDateKHR) return Status(absl::StatusCode::kUnavailable, "Swapchain out of date");
     if (acquireResult != vk::Result::eSuccess && acquireResult != vk::Result::eSuboptimalKHR) return InternalError("Failed to acquire swap chain image");
     if (m_device.resetFences(1, &m_inFlightFences[m_currentFrame]) != vk::Result::eSuccess) return InternalError("Failed to reset fences");
@@ -661,7 +1222,7 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     vk::Semaphore signalSemaphores[] = { m_renderFinishedSemaphores[m_currentFrame] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
-    (void)m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
+
     vk::PresentInfoKHR presentInfo;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
@@ -669,8 +1230,33 @@ void VK_Renderer::endFrame(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
-    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    {
+        vk::Result submitResult = m_context->getGraphicsQueue().submit(1, &submitInfo, m_inFlightFences[m_currentFrame]);
+        if (submitResult != vk::Result::eSuccess) {
+            NX_CORE_ERROR("QueueSubmit in endFrame failed with result: {}", vk::to_string(submitResult));
+        }
+
+        vk::Result presentResult = m_context->getGraphicsQueue().presentKHR(&presentInfo);
+        if (presentResult != vk::Result::eSuccess && presentResult != vk::Result::eSuboptimalKHR) {
+            NX_CORE_ERROR("QueuePresent in endFrame failed with result: {}", vk::to_string(presentResult));
+        } else if (presentResult == vk::Result::eSuboptimalKHR) {
+            NX_CORE_WARN("QueuePresent in endFrame returned eSuboptimalKHR");
+        }
+    }
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    static int p_frame = 0;
+    static float s_total = 0;
+    s_total += std::chrono::duration<float, std::milli>(t1 - t0).count();
+    if (++p_frame >= 60) {
+        NX_CORE_INFO("GPU Wait Profile: Submit+Present={:.2f}ms", s_total/60.0f);
+        p_frame = 0; s_total = 0;
+    }
+
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    m_absoluteFrameCount++;
 }
 uint32_t VK_Renderer::acquireNextImage() {
     uint32_t imageIndex;
@@ -686,8 +1272,88 @@ void VK_Renderer::present(uint32_t imageIndex) {
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
     presentInfo.pImageIndices = &imageIndex;
-    (void)m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    vk::Result presentResult = m_context->getGraphicsQueue().presentKHR(&presentInfo);
+    if (presentResult != vk::Result::eSuccess && presentResult != vk::Result::eSuboptimalKHR) {
+        NX_CORE_ERROR("QueuePresent in present() failed with result: {}", vk::to_string(presentResult));
+    } else if (presentResult == vk::Result::eSuboptimalKHR) {
+        NX_CORE_WARN("QueuePresent in present() returned eSuboptimalKHR");
+    }
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 void VK_Renderer::deviceWaitIdle() { (void)m_device.waitIdle(); }
+
+void VK_Renderer::uploadSnapshotData(RenderSnapshot* snapshot) {
+    if (!snapshot || snapshot->frameObjects.empty()) return;
+
+    size_t objCap = 100000;
+    uint32_t frameOffset = m_currentFrame * objCap;
+
+    (void)m_objectDataBuffer->uploadData(snapshot->frameObjects.data(), snapshot->frameObjects.size() * sizeof(ObjectData), frameOffset * sizeof(ObjectData));
+
+    std::vector<DrawIndexedIndirectCommand> allIndirectCommands;
+    allIndirectCommands.reserve(snapshot->frameObjects.size());
+    for (const auto& batch : snapshot->batches) {
+        allIndirectCommands.insert(allIndirectCommands.end(), batch.commands.begin(), batch.commands.end());
+    }
+
+    (void)m_indirectBuffers[m_currentFrame]->uploadDrawIndexedCommands(allIndirectCommands);
+}
+
+void VK_Renderer::updateMeshletBuffers(
+    const void* meshletsData, size_t meshletsSize,
+    const void* boundsData, size_t boundsSize,
+    const void* verticesData, size_t verticesSize,
+    const void* trianglesData, size_t trianglesSize)
+{
+    if (!m_meshletPipelineReady) return;
+    if (meshletsSize > 0) {
+        m_meshletBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletBuffer->create(meshletsSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletBuffer->uploadData(meshletsData, meshletsSize, 0);
+
+        m_meshletBoundsBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletBoundsBuffer->create(boundsSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletBoundsBuffer->uploadData(boundsData, boundsSize, 0);
+
+        m_meshletVertexBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletVertexBuffer->create(verticesSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletVertexBuffer->uploadData(verticesData, verticesSize, 0);
+
+        uint32_t triAlignedSize = (static_cast<uint32_t>(trianglesSize) + 3) & ~3;
+        std::vector<uint8_t> trisPadded(triAlignedSize, 0);
+        memcpy(trisPadded.data(), trianglesData, trianglesSize);
+        m_meshletTriangleBuffer = std::make_unique<VK_Buffer>(m_context);
+        m_meshletTriangleBuffer->create(triAlignedSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        m_meshletTriangleBuffer->uploadData(trisPadded.data(), triAlignedSize, 0);
+
+        auto globalVBO = static_cast<VK_Buffer*>(m_context->getGlobalVertexBuffer());
+
+        vk::DescriptorBufferInfo meshletInfo(m_meshletBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo boundsInfo(m_meshletBoundsBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo vertInfo(m_meshletVertexBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo triInfo(m_meshletTriangleBuffer->getHandle(), 0, VK_WHOLE_SIZE);
+        vk::DescriptorBufferInfo vboInfo(globalVBO->getHandle(), 0, VK_WHOLE_SIZE);
+
+        vk::DescriptorBufferInfo bufInfos[] = {meshletInfo, boundsInfo, vertInfo, triInfo, vboInfo};
+        std::vector<vk::WriteDescriptorSet> writes(5);
+        for (uint32_t i = 0; i < 5; i++) {
+            writes[i].dstSet = m_meshletDescriptorSet;
+            writes[i].dstBinding = i;
+            writes[i].dstArrayElement = 0;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+            writes[i].pBufferInfo = &bufInfos[i];
+        }
+        m_device.updateDescriptorSets(writes, {});
+    }
+}
+
 } // namespace Nexus

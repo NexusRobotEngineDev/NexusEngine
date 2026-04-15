@@ -1,6 +1,7 @@
 #include "RosBridgeSystem.h"
 #include "Components.h"
 #include "../Bridge/Log.h"
+#include "../Bridge/MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <zmq.hpp>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -28,11 +29,14 @@ struct RosBridgeSystem::Impl {
     std::unique_ptr<zmq::socket_t>  cmdReceiver;
     std::thread recvThread;
     std::atomic<bool> running{false};
+    std::atomic<bool> resetPending{false};
     std::mutex cmdMutex;
+    std::mutex pubMutex;
     std::vector<MotorCmd> latestCmds;
     bool initialized = false;
     std::string robotId   = "robot_0";
     std::string robotName = "unknown";
+    IPhysicsSystem* physicsSystem = nullptr;
 
     void startRecvThread() {
         running = true;
@@ -60,22 +64,49 @@ struct RosBridgeSystem::Impl {
     void parseCommand(const std::string& raw) {
         try {
             auto j = json::parse(raw);
-            if (j["type"] != "lowcmd") return;
+            auto type = j["type"].get<std::string>();
 
-            std::vector<MotorCmd> cmds;
-            for (auto& m : j["motors"]) {
-                MotorCmd cmd;
-                cmd.name = m["name"].get<std::string>();
-                cmd.q    = m["q"].get<float>();
-                cmd.dq   = m["dq"].get<float>();
-                cmd.kp   = m["kp"].get<float>();
-                cmd.kd   = m["kd"].get<float>();
-                cmd.tau  = m["tau"].get<float>();
-                cmds.push_back(cmd);
+            if (type == "reset") {
+                if (physicsSystem) {
+                    auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
+                    if (mj) {
+                        mj->resetSimulation();
+                        NX_CORE_INFO("[ZMQ] MuJoCo 仿真已重置 (From RecvThread)");
+                    }
+                } else {
+                    resetPending = true;
+                }
+                return;
             }
 
-            std::lock_guard<std::mutex> lock(cmdMutex);
-            latestCmds = std::move(cmds);
+            if (type != "lowcmd") return;
+
+            if (physicsSystem) {
+                for (auto& m : j["motors"]) {
+                    physicsSystem->setJointControl(
+                        m["name"].get<std::string>(),
+                        m["q"].get<float>(),
+                        m["dq"].get<float>(),
+                        m["kp"].get<float>(),
+                        m["kd"].get<float>(),
+                        m["tau"].get<float>()
+                    );
+                }
+            } else {
+                std::vector<MotorCmd> cmds;
+                for (auto& m : j["motors"]) {
+                    MotorCmd cmd;
+                    cmd.name = m["name"].get<std::string>();
+                    cmd.q    = m["q"].get<float>();
+                    cmd.dq   = m["dq"].get<float>();
+                    cmd.kp   = m["kp"].get<float>();
+                    cmd.kd   = m["kd"].get<float>();
+                    cmd.tau  = m["tau"].get<float>();
+                    cmds.push_back(cmd);
+                }
+                std::lock_guard<std::mutex> lock(cmdMutex);
+                latestCmds = std::move(cmds);
+            }
 
         } catch (const std::exception& e) {
             NX_CORE_WARN("ZMQ JSON parse error: {}", e.what());
@@ -127,58 +158,68 @@ void RosBridgeSystem::shutdown() {
     }
 }
 
-void RosBridgeSystem::applyIncomingCommands(IPhysicsSystem* physicsSystem) {
-    if (!m_impl->initialized || !physicsSystem) return;
-
-    std::vector<MotorCmd> cmds;
-    {
-        std::lock_guard<std::mutex> lock(m_impl->cmdMutex);
-        cmds = m_impl->latestCmds;
-    }
-
-    if (!cmds.empty()) {
-        static int s_logCounter = 0;
-        if (++s_logCounter % 500 == 0) {
-            NX_CORE_INFO("[ZMQ] 收到指令帧, 电机数={}, 首个: name={}, q={:.3f}, kp={:.1f}",
-                cmds.size(), cmds[0].name, cmds[0].q, cmds[0].kp);
-        }
-    } else {
-        static int s_emptyCounter = 0;
-        if (++s_emptyCounter % 500 == 0) {
-            NX_CORE_WARN("[ZMQ] 队列为空，尚未收到指令");
-        }
-    }
-
-    for (const auto& cmd : cmds) {
-        physicsSystem->setJointControl(cmd.name, cmd.q, cmd.dq, cmd.kp, cmd.kd, cmd.tau);
-    }
+void RosBridgeSystem::setPhysicsSystem(IPhysicsSystem* physicsSystem) {
+    m_impl->physicsSystem = physicsSystem;
 }
 
-void RosBridgeSystem::publishReplicas(Registry& registry) {
-    if (!m_impl->initialized) return;
 
-    auto view = registry.view<TransformComponent, RigidBodyComponent>();
+
+
+void RosBridgeSystem::publishPhysicsState(mjModel* model, mjData* data) {
+    if (!m_impl->initialized || !model || !data) return;
 
     json j_state;
     j_state["type"] = "state";
     j_state["bodies"] = json::array();
 
-    for (auto entity : view) {
-        const auto& transform = view.get<TransformComponent>(entity);
-        const auto& rigidBody = view.get<RigidBodyComponent>(entity);
+    for (int i = 1; i < model->nbody; ++i) {
+        const char* name = mj_id2name(model, mjOBJ_BODY, i);
+        std::string bodyName = name ? name : ("unnamed_body_" + std::to_string(i));
 
         json j_body;
-        j_body["name"]     = rigidBody.bodyName;
-        j_body["position"] = {transform.position[0], transform.position[1], transform.position[2]};
-        j_body["rotation"] = {transform.rotation[0], transform.rotation[1], transform.rotation[2], transform.rotation[3]};
-
+        j_body["name"] = bodyName;
+        j_body["position"] = {data->xpos[3*i], data->xpos[3*i+1], data->xpos[3*i+2]};
+        j_body["rotation"] = {data->xquat[4*i], data->xquat[4*i+1], data->xquat[4*i+2], data->xquat[4*i+3]};
         j_state["bodies"].push_back(j_body);
+
+        if (i == 1) {
+            double gyro[3] = {0.0, 0.0, 0.0};
+            int jnt_id = model->body_jntadr[i];
+            if (jnt_id >= 0 && model->jnt_type[jnt_id] == mjJNT_FREE) {
+                int dof_adr = model->jnt_dofadr[jnt_id];
+                gyro[0] = data->qvel[dof_adr + 3];
+                gyro[1] = data->qvel[dof_adr + 4];
+                gyro[2] = data->qvel[dof_adr + 5];
+            }
+
+            j_state["imu"] = {
+                {"quaternion", {data->xquat[4*i], data->xquat[4*i+1], data->xquat[4*i+2], data->xquat[4*i+3]}},
+                {"gyroscope",  {gyro[0], gyro[1], gyro[2]}}
+            };
+        }
     }
 
-    if (!j_state["bodies"].empty()) {
-        j_state["robot_id"] = m_impl->robotId;
-        std::string payload = j_state.dump();
-        std::string topic = "state:" + m_impl->robotId;
+    j_state["motors"] = json::array();
+    for (int i = 0; i < model->nu; ++i) {
+        const char* actuatorName = mj_id2name(model, mjOBJ_ACTUATOR, i);
+        if (!actuatorName) continue;
+        int trnid = model->actuator_trnid[i * 2];
+        float q   = (float)data->qpos[model->jnt_qposadr[trnid]];
+        float dq  = (float)data->qvel[model->jnt_dofadr[trnid]];
+        float tau = (float)data->actuator_force[i];
+        j_state["motors"].push_back({
+            {"name", actuatorName},
+            {"q", q},
+            {"dq", dq},
+            {"tau", tau}
+        });
+    }
+
+    j_state["robot_id"] = m_impl->robotId;
+    std::string payload = j_state.dump();
+    std::string topic = "state:" + m_impl->robotId;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->pubMutex);
         m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
         m_impl->publisher->send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
     }
@@ -216,6 +257,20 @@ void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
     std::string listPayload = jList.dump();
     m_impl->publisher->send(zmq::message_t("robot_list", 10), zmq::send_flags::sndmore);
     m_impl->publisher->send(zmq::message_t(listPayload.data(), listPayload.size()), zmq::send_flags::none);
+}
+
+void RosBridgeSystem::publishImage(const std::vector<uint8_t>& imagePixels, int width, int height) {
+    if (!m_impl->initialized || imagePixels.empty()) return;
+
+    static int imgLog = 0;
+    if (imgLog++ % 100 == 0) {
+        NX_CORE_INFO("RosBridgeSystem::publishImage CALLED! len: {}", imagePixels.size());
+    }
+
+    std::string topic = "vision:" + m_impl->robotId;
+    std::lock_guard<std::mutex> lock(m_impl->pubMutex);
+    m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
+    m_impl->publisher->send(zmq::message_t(imagePixels.data(), imagePixels.size()), zmq::send_flags::none);
 }
 
 void RosBridgeSystem::setRobotInfo(const std::string& robotId, const std::string& robotName) {

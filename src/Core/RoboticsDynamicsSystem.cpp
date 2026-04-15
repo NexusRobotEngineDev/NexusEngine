@@ -1,6 +1,8 @@
 #include "RoboticsDynamicsSystem.h"
 #include "Components.h"
 #include "../Bridge/Log.h"
+#include <cassert>
+#include <unordered_set>
 
 namespace Nexus {
 namespace Core {
@@ -32,16 +34,48 @@ static std::array<float, 16> multiplyMat4(const std::array<float, 16>& a, const 
     return r;
 }
 
-static void propagateZUp(entt::registry& reg, entt::entity entity, const std::array<float, 16>& parentMatZUp) {
-    if (!reg.all_of<HierarchyComponent>(entity)) return;
-    auto& hier = reg.get<HierarchyComponent>(entity);
-    for (auto child : hier.children) {
-        if (reg.all_of<RigidBodyComponent>(child)) continue;
-        if (reg.all_of<TransformComponent>(child)) {
-            auto& childTr = reg.get<TransformComponent>(child);
-            auto childLocalZUp = childTr.computeLocalMatrix();
-            childTr.worldMatrix = multiplyMat4(parentMatZUp, childLocalZUp);
-            propagateZUp(reg, child, childTr.worldMatrix);
+static void propagatePhysicsZUp(entt::registry& reg, entt::entity entity, const std::array<float, 16>& parentMatZUp, MuJoCo_PhysicsSystem* mj) {
+    if (!reg.all_of<TransformComponent>(entity)) return;
+
+    auto& tr = reg.get<TransformComponent>(entity);
+    std::array<float, 16> currentMatZUp = parentMatZUp;
+
+    bool gotMuJoCo = false;
+    if (reg.all_of<RigidBodyComponent>(entity)) {
+        const auto& rb = reg.get<RigidBodyComponent>(entity);
+        int bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, rb.bodyName.c_str());
+        if (bodyId < 0) {
+            bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, (rb.bodyName + "_link").c_str());
+        }
+        if (bodyId < 0 && rb.bodyName.size() > 5 && rb.bodyName.substr(rb.bodyName.size() - 5) == "_link") {
+            bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, rb.bodyName.substr(0, rb.bodyName.size() - 5).c_str());
+        }
+
+        if (bodyId >= 0) {
+            const double* pos = mj->m_data->xpos + 3 * bodyId;
+            const double* quat = mj->m_data->xquat + 4 * bodyId;
+            tr.worldMatrix = buildZUpMatrix(pos, quat);
+            currentMatZUp = tr.worldMatrix;
+            gotMuJoCo = true;
+        } else {
+            static std::unordered_set<std::string> s_missed;
+            if (s_missed.find(rb.bodyName) == s_missed.end()) {
+                NX_CORE_WARN("[Physics] URDF Link '{}' 在 MuJoCo 中未找到对应的物理 Body，将使用父节点的相对变换。", rb.bodyName);
+                s_missed.insert(rb.bodyName);
+            }
+        }
+    }
+
+    if (!gotMuJoCo) {
+        auto localZUp = tr.computeLocalMatrix();
+        tr.worldMatrix = multiplyMat4(parentMatZUp, localZUp);
+        currentMatZUp = tr.worldMatrix;
+    }
+
+    if (reg.all_of<HierarchyComponent>(entity)) {
+        const auto& hier = reg.get<HierarchyComponent>(entity);
+        for (auto child : hier.children) {
+            propagatePhysicsZUp(reg, child, currentMatZUp, mj);
         }
     }
 }
@@ -59,34 +93,57 @@ static void convertTreeToYUp(entt::registry& reg, entt::entity entity, const std
     }
 }
 
+static void applyOffsetToTree(entt::registry& reg, entt::entity entity, float ox, float oy, float oz) {
+    if (reg.all_of<TransformComponent>(entity)) {
+        auto& tr = reg.get<TransformComponent>(entity);
+        tr.worldMatrix[12] += ox;
+        tr.worldMatrix[13] += oy;
+        tr.worldMatrix[14] += oz;
+    }
+    if (reg.all_of<HierarchyComponent>(entity)) {
+        for (auto child : reg.get<HierarchyComponent>(entity).children) {
+            applyOffsetToTree(reg, child, ox, oy, oz);
+        }
+    }
+}
+
 void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsSystem) {
     if (!physicsSystem) return;
     auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
     if (!mj || !mj->m_model || !mj->m_data) return;
 
     auto& reg = registry.getInternal();
-    auto view = reg.view<TransformComponent, RigidBodyComponent>();
+    auto view = reg.view<RigidBodyComponent>();
 
-    entt::entity rootEntity = entt::null;
+    std::vector<entt::entity> rootEntities;
 
     for (auto entity : view) {
-        auto& transform = view.get<TransformComponent>(entity);
         const auto& rb = view.get<RigidBodyComponent>(entity);
-
-        int bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, (rb.bodyName == "base") ? "base_link" : rb.bodyName.c_str());
-        if (bodyId < 0) continue;
-
-        if (rb.bodyName == "base") rootEntity = entity;
-
-        const double* pos = mj->m_data->xpos + 3 * bodyId;
-        const double* quat = mj->m_data->xquat + 4 * bodyId;
-
-        transform.worldMatrix = buildZUpMatrix(pos, quat);
-
-        propagateZUp(reg, entity, transform.worldMatrix);
+        int bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, rb.bodyName.c_str());
+        if (bodyId < 0) bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, (rb.bodyName + "_link").c_str());
+        if (bodyId < 0 && rb.bodyName.size() > 5 && rb.bodyName.substr(rb.bodyName.size() - 5) == "_link") {
+            bodyId = mj_name2id(mj->m_model, mjOBJ_BODY, rb.bodyName.substr(0, rb.bodyName.size() - 5).c_str());
+        }
+        if (bodyId >= 0 && mj->m_model->body_parentid[bodyId] == 0) {
+            rootEntities.push_back(entity);
+        }
     }
 
-    if (rootEntity != entt::null) {
+    for (entt::entity rootEntity : rootEntities) {
+        float offsetX = 0.f, offsetY = 0.f, offsetZ = 0.f;
+        if (reg.all_of<TransformComponent>(rootEntity)) {
+            auto& rootTr = reg.get<TransformComponent>(rootEntity);
+            offsetX = rootTr.position[0];
+            offsetY = rootTr.position[1];
+            offsetZ = rootTr.position[2];
+        }
+
+        std::array<float, 16> identityMat = {
+            1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1
+        };
+
+        propagatePhysicsZUp(reg, rootEntity, identityMat, mj);
+
         std::array<float, 16> zToY = {
             1,  0,  0,  0,
             0,  0, -1,  0,
@@ -94,6 +151,16 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
             0,  0,  0,  1
         };
         convertTreeToYUp(reg, rootEntity, zToY);
+
+        applyOffsetToTree(reg, rootEntity, offsetX, offsetY, offsetZ);
+
+        static int s_printCounter = 0;
+        if (++s_printCounter % 120 == 0) {
+            auto& tr = reg.get<TransformComponent>(rootEntity);
+            const double* pos = mj->m_data->xpos + 3 * mj_name2id(mj->m_model, mjOBJ_BODY, "base_link");
+            NX_CORE_INFO("RoboticsDynamicsSystem: base_link MuJoCo pos=({:.3f}, {:.3f}, {:.3f}), Engine WorldMat trans=({:.3f}, {:.3f}, {:.3f})",
+                 pos[0], pos[1], pos[2], tr.worldMatrix[12], tr.worldMatrix[13], tr.worldMatrix[14]);
+        }
     }
 }
 

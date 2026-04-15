@@ -1,11 +1,16 @@
 #include "VK_UIBridge.h"
 #include "../Log.h"
 #include "../ResourceLoader.h"
-#include <RmlUi/Debugger.h>
 
 #ifdef ENABLE_RMLUI
+#include <RmlUi/Debugger.h>
+#include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Element.h>
 
 namespace Nexus {
+
+extern std::atomic<float> g_RenderStats_UITime;
 
 VK_UIBridge::VK_UIBridge(IContext* context, IRenderer* renderer)
     : m_context(context), m_renderer(renderer) {
@@ -40,9 +45,6 @@ bool VK_UIBridge::initialize(int windowWidth, int windowHeight) {
         return false;
     }
 
-    Rml::Debugger::Initialise(m_rmlContext);
-    Rml::Debugger::SetVisible(true);
-
     NX_CORE_INFO("RmlUi Bridge Initialized.");
     return true;
 }
@@ -58,41 +60,6 @@ void VK_UIBridge::shutdown() {
     m_renderInterface.reset();
     m_systemInterface.reset();
 }
-
-
-
-void VK_UIBridge::update() {
-    if (m_rmlContext) {
-        m_rmlContext->Update();
-    }
-    if (m_renderInterface) {
-        m_renderInterface->pumpDeferredDestruction();
-    }
-}
-
-void VK_UIBridge::render() {
-    if (m_rmlContext) {
-        m_rmlContext->Render();
-    }
-}
-
-Rml::ElementDocument* VK_UIBridge::loadDocument(const std::string& documentPath) {
-    if (!m_rmlContext) return nullptr;
-    auto* doc = m_rmlContext->LoadDocument(documentPath);
-    if (doc) {
-        doc->Show();
-        NX_CORE_INFO("RmlUi Loaded document: {}", documentPath);
-    } else {
-        NX_CORE_ERROR("RmlUi Failed to load document: {}", documentPath);
-    }
-    return doc;
-}
-
-#ifdef ENABLE_SDL
-#include <RmlUi/Core/Input.h>
-
-#include <RmlUi/Core/Context.h>
-#include <RmlUi/Core/Element.h>
 
 static Rml::Input::KeyIdentifier translateKey(SDL_Scancode scancode) {
     switch (scancode) {
@@ -116,56 +83,132 @@ static Rml::Input::KeyIdentifier translateKey(SDL_Scancode scancode) {
     }
 }
 
-void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
+void VK_UIBridge::drainEventQueue() {
     if (!m_rmlContext) return;
 
-    int keyModifier = 0;
-    SDL_Keymod mod = SDL_GetModState();
-    if (mod & SDL_KMOD_SHIFT) keyModifier |= Rml::Input::KM_SHIFT;
-    if (mod & SDL_KMOD_CTRL)  keyModifier |= Rml::Input::KM_CTRL;
-    if (mod & SDL_KMOD_ALT)   keyModifier |= Rml::Input::KM_ALT;
+    size_t tail = m_eventTail.load(std::memory_order_relaxed);
+    size_t head = m_eventHead.load(std::memory_order_acquire);
 
-    switch(event.type) {
-        case SDL_EVENT_MOUSE_MOTION:
-            m_rmlContext->ProcessMouseMove((int)event.motion.x, (int)event.motion.y, keyModifier);
-            break;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            if (event.button.button == SDL_BUTTON_RIGHT) {
-                if (auto focus = m_rmlContext->GetFocusElement()) {
-                    focus->Blur();
+    while (tail != head) {
+        const SDL_Event& event = m_eventBuf[tail % EVENT_QUEUE_CAP];
+
+        int keyModifier = 0;
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & SDL_KMOD_SHIFT) keyModifier |= Rml::Input::KM_SHIFT;
+        if (mod & SDL_KMOD_CTRL)  keyModifier |= Rml::Input::KM_CTRL;
+        if (mod & SDL_KMOD_ALT)   keyModifier |= Rml::Input::KM_ALT;
+
+        switch(event.type) {
+            case SDL_EVENT_MOUSE_MOTION:
+                m_rmlContext->ProcessMouseMove((int)event.motion.x, (int)event.motion.y, keyModifier);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    if (auto focus = m_rmlContext->GetFocusElement()) {
+                        focus->Blur();
+                    }
                 }
+                m_rmlContext->ProcessMouseButtonDown(event.button.button - 1, keyModifier);
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                m_rmlContext->ProcessMouseButtonUp(event.button.button - 1, keyModifier);
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                m_rmlContext->ProcessMouseWheel(-event.wheel.y, keyModifier);
+                break;
+            case SDL_EVENT_KEY_DOWN: {
+                Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
+                if (key != Rml::Input::KI_UNKNOWN) {
+                    m_rmlContext->ProcessKeyDown(key, keyModifier);
+                }
+                break;
             }
-            m_rmlContext->ProcessMouseButtonDown(event.button.button - 1, keyModifier);
-            break;
-        case SDL_EVENT_MOUSE_BUTTON_UP:
-            m_rmlContext->ProcessMouseButtonUp(event.button.button - 1, keyModifier);
-            break;
-        case SDL_EVENT_MOUSE_WHEEL:
-            m_rmlContext->ProcessMouseWheel(-event.wheel.y, keyModifier);
-            break;
-        case SDL_EVENT_KEY_DOWN: {
-            Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
-            if (key != Rml::Input::KI_UNKNOWN) {
-                m_rmlContext->ProcessKeyDown(key, keyModifier);
+            case SDL_EVENT_KEY_UP: {
+                Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
+                if (key != Rml::Input::KI_UNKNOWN) {
+                    m_rmlContext->ProcessKeyUp(key, keyModifier);
+                }
+                break;
             }
-            break;
+            case SDL_EVENT_TEXT_INPUT: {
+                if (event.text.text) {
+                    m_rmlContext->ProcessTextInput(event.text.text);
+                }
+                break;
+            }
         }
-        case SDL_EVENT_KEY_UP: {
-            Rml::Input::KeyIdentifier key = translateKey(event.key.scancode);
-            if (key != Rml::Input::KI_UNKNOWN) {
-                m_rmlContext->ProcessKeyUp(key, keyModifier);
-            }
-            break;
-        }
-        case SDL_EVENT_TEXT_INPUT: {
-            if (event.text.text) {
-                m_rmlContext->ProcessTextInput(event.text.text);
-            }
-            break;
-        }
+
+        tail++;
+        m_eventTail.store(tail, std::memory_order_release);
     }
 }
+
+#ifdef ENABLE_SDL
+void VK_UIBridge::processSdlEvent(const SDL_Event& event) {
+    size_t head = m_eventHead.load(std::memory_order_relaxed);
+    size_t tail = m_eventTail.load(std::memory_order_acquire);
+
+    if (head - tail >= EVENT_QUEUE_CAP) {
+        return;
+    }
+
+    m_eventBuf[head % EVENT_QUEUE_CAP] = event;
+    m_eventHead.store(head + 1, std::memory_order_release);
+}
 #endif
+
+void VK_UIBridge::lockUI() { m_uiMutex.lock(); }
+bool VK_UIBridge::tryLockUI() { return m_uiMutex.try_lock(); }
+void VK_UIBridge::unlockUI() { m_uiMutex.unlock(); }
+
+void VK_UIBridge::updateUI() {
+    drainEventQueue();
+
+    if (m_rmlContext) {
+        m_rmlContext->Update();
+    }
+}
+
+void VK_UIBridge::renderUI() {
+    std::lock_guard<std::mutex> lock(m_uiMutex);
+
+    if (m_renderInterface) {
+        m_renderInterface->pumpDeferredDestruction();
+    }
+
+    auto tStart = std::chrono::high_resolution_clock::now();
+
+    if (m_rmlContext) {
+        if (m_renderInterface) {
+            m_renderInterface->beginRender();
+        }
+        m_rmlContext->Render();
+    }
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float, std::milli>(tEnd - tStart).count();
+
+    static float accum = 0;
+    static int frames = 0;
+    accum += elapsed;
+    if (++frames >= 60) {
+        g_RenderStats_UITime.store(accum / frames, std::memory_order_relaxed);
+        accum = 0;
+        frames = 0;
+    }
+}
+
+Rml::ElementDocument* VK_UIBridge::loadDocument(const std::string& documentPath) {
+    if (!m_rmlContext) return nullptr;
+    auto* doc = m_rmlContext->LoadDocument(documentPath);
+    if (doc) {
+        doc->Show();
+        NX_CORE_INFO("RmlUi Loaded document: {}", documentPath);
+    } else {
+        NX_CORE_ERROR("RmlUi Failed to load document: {}", documentPath);
+    }
+    return doc;
+}
 
 void VK_UIBridge::onResize(int width, int height) {
     if(m_rmlContext) {
