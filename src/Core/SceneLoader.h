@@ -25,6 +25,7 @@ public:
         std::array<float, 3> position = {0,0,0};
         std::array<float, 3> size = {1,1,1};
         std::array<float, 4> color = {1,1,1,1};
+        std::string modelPath;
     };
 
     struct SceneConfig {

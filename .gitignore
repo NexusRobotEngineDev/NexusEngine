@@ -7,3 +7,4 @@ build-linux-release
 .idea
 NexusEngine.log
 build
+cesium_diag.txt
