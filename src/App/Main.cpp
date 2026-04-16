@@ -177,8 +177,8 @@ void ProcessEventSync(const SDL_Event& sdlEvent) {
         case SDL_EVENT_MOUSE_WHEEL: {
             float scrollAmt = sdlEvent.wheel.y;
             g_input.cameraSpeedMultiplier *= (1.0f + scrollAmt * 0.1f);
-            if (g_input.cameraSpeedMultiplier < 0.01f) g_input.cameraSpeedMultiplier = 0.01f;
-            if (g_input.cameraSpeedMultiplier > 10000000.0f) g_input.cameraSpeedMultiplier = 10000000.0f;
+            if (g_input.cameraSpeedMultiplier < 1.0f) g_input.cameraSpeedMultiplier = 1.0f;
+            if (g_input.cameraSpeedMultiplier > 5.0f) g_input.cameraSpeedMultiplier = 5.0f;
             break;
         }
         default: break;
