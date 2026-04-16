@@ -1,7 +1,11 @@
 {
   "name": "g1_humanoid",
   "camera": {
-    "position": [2.0, 1.2, 2.5]
+    "position": [
+      1.5,
+      -23.6,
+      30.0
+    ]
   },
   "robot": {
     "urdf": "Models/g1/g1_description.urdf",

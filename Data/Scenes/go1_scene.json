@@ -1,7 +1,11 @@
 {
   "name": "go1_test",
   "camera": {
-    "position": [0.0, 0.5, 3.0]
+    "position": [
+      0.0,
+      0.5,
+      3.0
+    ]
   },
   "robot": {
     "urdf": "Models/go1/go1.urdf",
