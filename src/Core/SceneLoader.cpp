@@ -64,7 +64,8 @@ StatusOr<SceneLoader::SceneConfig> SceneLoader::parseSceneFile(const std::string
     if (j.contains("objects") && j["objects"].is_array()) {
         for (auto& obj : j["objects"]) {
             SceneLoader::ObjectDef def;
-            def.type     = obj.value("type", "box");
+            def.modelPath = obj.value("model", obj.value("modelPath", ""));
+            def.type     = def.modelPath.empty() ? obj.value("type", "box") : "model";
             def.position = readVec3(obj, "position");
             def.size     = readVec3(obj, "size", {1, 1, 1});
             def.color    = readVec4(obj, "color");
@@ -102,12 +103,25 @@ Status SceneLoader::createEntities(
 
     for (size_t i = 0; i < config.objects.size(); ++i) {
         const auto& obj = config.objects[i];
-        Entity entity = scene->createEntity("Object_" + std::to_string(i));
-        auto& tr = entity.getComponent<TransformComponent>();
-        tr.position = obj.position;
-        tr.scale = obj.size;
-        if (renderer)
-            entity.addComponent<MeshComponent>(renderer->getCubeMeshComponent());
+        if (obj.type == "model" && !obj.modelPath.empty()) {
+            std::string fullModelPath = "Data/" + obj.modelPath;
+            if (obj.modelPath.substr(0, 5) == "Data/") {
+                fullModelPath = obj.modelPath;
+            }
+            Entity entity = ModelLoader::loadModel(textureManager, scene, renderer->getMeshManager(), fullModelPath);
+            if (entity.isValid()) {
+                auto& tr = entity.getComponent<TransformComponent>();
+                tr.position = obj.position;
+                tr.scale = obj.size;
+            }
+        } else {
+            Entity entity = scene->createEntity("Object_" + std::to_string(i));
+            auto& tr = entity.getComponent<TransformComponent>();
+            tr.position = obj.position;
+            tr.scale = obj.size;
+            if (renderer)
+                entity.addComponent<MeshComponent>(renderer->getCubeMeshComponent());
+        }
     }
 
     return OkStatus();
