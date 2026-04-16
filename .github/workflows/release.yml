@@ -45,7 +45,8 @@ jobs:
         Copy-Item "build/Release/NexusApp.exe" "$pkgDir/"
         $dllFiles = Get-ChildItem "build/Release/*.dll" -ErrorAction SilentlyContinue
         if ($dllFiles) { Copy-Item $dllFiles "$pkgDir/" }
-        if (Test-Path "build/Data") { Copy-Item -Recurse "build/Data" "$pkgDir/Data" }
+        if (Test-Path "build/Release/Data") { Copy-Item -Recurse "build/Release/Data" "$pkgDir/" }
+        elseif (Test-Path "Data") { Copy-Item -Recurse "Data" "$pkgDir/" }
 
         Compress-Archive -Path "$pkgDir" -DestinationPath "build/$pkgName.zip"
         echo "ARTIFACT_PATH=build/$pkgName.zip" >> $env:GITHUB_ENV
