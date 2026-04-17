@@ -84,8 +84,13 @@ endforeach()
 
 message(STATUS "Patched ${PATCHED_COUNT} cesium-native headers with missing <string> include and patched CMakeLists to avoid spdlog alias install errors.")
 
+find_program(PYTHON_EXECUTABLE NAMES python3 python)
+if(NOT PYTHON_EXECUTABLE)
+    message(FATAL_ERROR "Python interpreter not found! Cannot patch cesium cache.")
+endif()
+
 execute_process(
-    COMMAND python ${CMAKE_CURRENT_LIST_DIR}/patch_cesium_cache.py ${CESIUM_SRC_DIR}
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/patch_cesium_cache.py ${CESIUM_SRC_DIR}
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
     RESULT_VARIABLE PATCH_CACHE_RESULT
 )
