@@ -34,7 +34,8 @@ public:
     mjData*  m_data  = nullptr;
 
 private:
-    struct JointCmd {
+    struct JointCmdEvent {
+        int actuatorId = -1;
         float q = 0.0f;
         float dq = 0.0f;
         float kp = 0.0f;
@@ -47,8 +48,9 @@ private:
 
     double m_timeStepAccumulator = 0.0;
     std::unordered_map<std::string, int> m_actuatorName2Id;
-    std::unordered_map<int, JointCmd> m_pendingCommands;
-    std::mutex m_cmdMutex;
+    SPSCQueue<JointCmdEvent, 4096> m_cmdQueue;
+    std::unordered_map<int, JointCmdEvent> m_localCmds;
+    std::atomic<bool> m_resetRequested{false};
 
     StateCallback m_stateCallback;
     int m_stateDecimation = 7;

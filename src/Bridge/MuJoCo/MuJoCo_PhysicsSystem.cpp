@@ -26,7 +26,9 @@ Status MuJoCo_PhysicsSystem::loadModel(const std::string& path) {
     }
 
     m_actuatorName2Id.clear();
-    m_pendingCommands.clear();
+    m_localCmds.clear();
+    JointCmdEvent dummy;
+    while(m_cmdQueue.pop(dummy)) {}
     m_timeStepAccumulator = 0.0;
 
     char error[1000] = "Could not load binary model";
@@ -63,30 +65,37 @@ void MuJoCo_PhysicsSystem::shutdown() {
     }
 
     m_actuatorName2Id.clear();
-    m_pendingCommands.clear();
+    m_localCmds.clear();
+    JointCmdEvent dummy;
+    while(m_cmdQueue.pop(dummy)) {}
 
     NX_CORE_INFO("MuJoCo Physics System Shutdown");
 }
 
 void MuJoCo_PhysicsSystem::resetSimulation() {
     if (!m_model || !m_data) return;
-    std::lock_guard<std::mutex> lock(m_cmdMutex);
-    mj_resetData(m_model, m_data);
-    mj_forward(m_model, m_data);
-    m_pendingCommands.clear();
-    m_timeStepAccumulator = 0.0;
-    NX_CORE_INFO("MuJoCo 仿真已重置到初始状态");
+    m_resetRequested.store(true, std::memory_order_release);
+    NX_CORE_INFO("MuJoCo 仿真重置请求已发送至物理线程");
 }
 
 void MuJoCo_PhysicsSystem::update(float deltaTime) {
     if (m_model && m_data) {
-        bool isPaused = false;
-        {
-            std::lock_guard<std::mutex> lock(m_cmdMutex);
-            if (m_pendingCommands.empty()) {
-                isPaused = true;
-            }
+        if (m_resetRequested.exchange(false, std::memory_order_acquire)) {
+            mj_resetData(m_model, m_data);
+            mj_forward(m_model, m_data);
+            m_localCmds.clear();
+            JointCmdEvent dummy;
+            while(m_cmdQueue.pop(dummy)) {}
+            m_timeStepAccumulator = 0.0;
+            NX_CORE_INFO("MuJoCo 仿真已由物理线程执行重置");
         }
+
+        JointCmdEvent evt;
+        while(m_cmdQueue.pop(evt)) {
+            m_localCmds[evt.actuatorId] = evt;
+        }
+
+        bool isPaused = m_localCmds.empty();
 
         if (isPaused) {
             static int bootstrapCounter = 0;
@@ -99,26 +108,23 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
         m_timeStepAccumulator += deltaTime;
 
         while (m_timeStepAccumulator >= m_model->opt.timestep) {
-            {
-                std::lock_guard<std::mutex> lock(m_cmdMutex);
-                for(const auto& [actuatorId, cmd] : m_pendingCommands) {
-                    if (std::isnan(cmd.q) || std::isnan(cmd.kp) || std::isinf(cmd.q)) continue;
+            for(const auto& [actuatorId, cmd] : m_localCmds) {
+                if (std::isnan(cmd.q) || std::isnan(cmd.kp) || std::isinf(cmd.q)) continue;
 
-                    int trnid = m_model->actuator_trnid[actuatorId * 2];
-                    float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
-                    float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
-                    float ctrl = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
+                int trnid = m_model->actuator_trnid[actuatorId * 2];
+                float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
+                float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
+                float ctrl = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
 
-                    if (std::isnan(ctrl) || std::isinf(ctrl)) continue;
+                if (std::isnan(ctrl) || std::isinf(ctrl)) continue;
 
-                    float frcLo = (float)m_model->actuator_ctrlrange[actuatorId * 2];
-                    float frcHi = (float)m_model->actuator_ctrlrange[actuatorId * 2 + 1];
-                    if (frcLo < frcHi) {
-                        ctrl = std::clamp(ctrl, frcLo, frcHi);
-                    }
-
-                    m_data->ctrl[actuatorId] = ctrl;
+                float frcLo = (float)m_model->actuator_ctrlrange[actuatorId * 2];
+                float frcHi = (float)m_model->actuator_ctrlrange[actuatorId * 2 + 1];
+                if (frcLo < frcHi) {
+                    ctrl = std::clamp(ctrl, frcLo, frcHi);
                 }
+
+                m_data->ctrl[actuatorId] = ctrl;
             }
             mj_step(m_model, m_data);
             m_timeStepAccumulator -= m_model->opt.timestep;
@@ -136,8 +142,10 @@ void MuJoCo_PhysicsSystem::setJointControl(const std::string& jointName, float q
 
     auto it = m_actuatorName2Id.find(jointName);
     if (it != m_actuatorName2Id.end()) {
-        std::lock_guard<std::mutex> lock(m_cmdMutex);
-        m_pendingCommands[it->second] = {q, dq, kp, kd, tau};
+        JointCmdEvent evt;
+        evt.actuatorId = it->second;
+        evt.q = q; evt.dq = dq; evt.kp = kp; evt.kd = kd; evt.tau = tau;
+        m_cmdQueue.push(evt);
     }
 }
 
