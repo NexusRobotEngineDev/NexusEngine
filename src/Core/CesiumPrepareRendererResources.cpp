@@ -28,6 +28,8 @@ struct ParsedPrimitive {
     std::vector<uint32_t> indices;
     std::string textureKey;
     std::array<float, 4> baseColorFactor = {1, 1, 1, 1};
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
     glm::dmat4 nodeTransform = glm::dmat4(1.0);
 };
 
@@ -72,6 +74,8 @@ void parsePrimitive(const CesiumGltf::Model& model, const CesiumGltf::MeshPrimit
         if (material.pbrMetallicRoughness) {
             auto& factor = material.pbrMetallicRoughness->baseColorFactor;
             out.baseColorFactor = {(float)factor[0], (float)factor[1], (float)factor[2], (float)factor[3]};
+            out.metallicFactor = material.pbrMetallicRoughness->metallicFactor;
+            out.roughnessFactor = material.pbrMetallicRoughness->roughnessFactor;
 
             if (material.pbrMetallicRoughness->baseColorTexture) {
                 uvIndex = material.pbrMetallicRoughness->baseColorTexture->texCoord;
@@ -405,6 +409,8 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         CesiumPrimitiveRenderData renderData;
         renderData.indexCount = static_cast<uint32_t>(prim.indices.size());
         renderData.baseColorFactor = prim.baseColorFactor;
+        renderData.metallicFactor = prim.metallicFactor;
+        renderData.roughnessFactor = prim.roughnessFactor;
 
         if (m_textureManager && m_textureManager->getWhiteTexture()) {
             renderData.albedoTexture = m_textureManager->getWhiteTexture()->getBindlessTextureIndex();
@@ -486,6 +492,8 @@ void* CesiumPrepareRendererResources::prepareInMainThread(Cesium3DTilesSelection
         mesh.indexOffset = pRenderResources->primitives.back().indexOffset;
         mesh.indexCount = pRenderResources->primitives.back().indexCount;
         mesh.albedoFactor = pRenderResources->primitives.back().baseColorFactor;
+        mesh.metallicFactor = pRenderResources->primitives.back().metallicFactor;
+        mesh.roughnessFactor = pRenderResources->primitives.back().roughnessFactor;
         mesh.albedoTexture = pRenderResources->primitives.back().albedoTexture;
         mesh.samplerIndex = pRenderResources->primitives.back().samplerIndex;
 

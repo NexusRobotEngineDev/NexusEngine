@@ -1,0 +1,23 @@
+{
+  "name": "go2_person_follow",
+  "camera": {
+    "position": [
+      1.5,
+      -23.0,
+      33.0
+    ]
+  },
+  "robot": {
+    "urdf": "Models/go2/go2_description.urdf",
+    "physics": "Scenes/go2_mujoco/scene.xml"
+  },
+  "objects": [
+    {
+      "name": "DummyTarget",
+      "model": "Models/person.glb",
+      "position": [2.5, -30.15, -23.755],
+      "size": [1.0, 1.0, 1.0],
+      "color": [1.0, 1.0, 1.0, 1.0]
+    }
+  ]
+}

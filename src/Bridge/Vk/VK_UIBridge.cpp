@@ -39,6 +39,11 @@ bool VK_UIBridge::initialize(int windowWidth, int windowHeight) {
         NX_CORE_ERROR("Failed to load RmlUi font: {}", fontPath);
     }
 
+    std::string cnFontPath = ResourceLoader::getBasePath() + "Data/UI/simhei.ttf";
+    if (!Rml::LoadFontFace(cnFontPath, true)) { 
+        NX_CORE_ERROR("加载中文字体失败: {}", cnFontPath);
+    }
+
     m_rmlContext = Rml::CreateContext("NexusEditor", Rml::Vector2i(windowWidth, windowHeight));
     if (!m_rmlContext) {
         NX_CORE_ERROR("Failed to create RmlUi Context!");

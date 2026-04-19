@@ -50,6 +50,10 @@ StatusOr<SceneLoader::SceneConfig> SceneLoader::parseSceneFile(const std::string
     if (j.contains("camera"))
         config.cameraPosition = readVec3(j["camera"], "position", {0.f, 0.5f, 3.f});
 
+    if (j.contains("enable_gis")) {
+        config.enableGis = j.value("enable_gis", true);
+    }
+
     if (j.contains("robot")) {
         config.robotUrdf    = j["robot"].value("urdf", "");
         config.robotPhysics = j["robot"].value("physics", "");
@@ -69,6 +73,8 @@ StatusOr<SceneLoader::SceneConfig> SceneLoader::parseSceneFile(const std::string
             def.position = readVec3(obj, "position");
             def.size     = readVec3(obj, "size", {1, 1, 1});
             def.color    = readVec4(obj, "color");
+            def.metallic = obj.value("metallic", 0.0f);
+            def.roughness = obj.value("roughness", 1.0f);
             config.objects.push_back(def);
         }
     }
@@ -119,8 +125,13 @@ Status SceneLoader::createEntities(
             auto& tr = entity.getComponent<TransformComponent>();
             tr.position = obj.position;
             tr.scale = obj.size;
-            if (renderer)
-                entity.addComponent<MeshComponent>(renderer->getCubeMeshComponent());
+            if (renderer) {
+                auto mesh = renderer->getCubeMeshComponent();
+                mesh.albedoFactor = obj.color;
+                mesh.metallicFactor = obj.metallic;
+                mesh.roughnessFactor = obj.roughness;
+                entity.addComponent<MeshComponent>(mesh);
+            }
         }
     }
 

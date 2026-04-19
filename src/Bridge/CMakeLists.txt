@@ -85,6 +85,7 @@ if(ENABLE_RMLUI)
 endif()
 
 if(ENABLE_MUJOCO)
+    find_package(unofficial-concurrentqueue CONFIG REQUIRED)
     target_compile_definitions(BridgeImpl PUBLIC ENABLE_MUJOCO)
-    target_link_libraries(BridgeImpl PUBLIC mujoco::mujoco)
+    target_link_libraries(BridgeImpl PUBLIC mujoco::mujoco unofficial::concurrentqueue::concurrentqueue)
 endif()

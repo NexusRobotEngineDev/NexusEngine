@@ -56,10 +56,12 @@ void VK_Renderer::shutdown() {
         m_pipelineLayout = nullptr;
     }
 
-    if (m_offscreenReadbackMapped) {
-        m_offscreenReadbackMapped = nullptr;
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (m_offscreenReadback[i]) {
+            m_offscreenReadbackMapped[i] = nullptr;
+            m_offscreenReadback[i].reset();
+        }
     }
-    m_offscreenReadback.reset();
     m_offscreenDepth.reset();
     m_offscreenColor.reset();
 
@@ -212,10 +214,12 @@ Status VK_Renderer::createOffscreenResources() {
     m_offscreenDepth = std::make_unique<VK_Texture>(m_context);
     NX_RETURN_IF_ERROR(m_offscreenDepth->createDepth(m_offscreenExtent.width, m_offscreenExtent.height, m_swapchain->getDepthFormat()));
 
-    m_offscreenReadback = std::make_unique<VK_Buffer>(m_context);
     size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
-    NX_RETURN_IF_ERROR(m_offscreenReadback->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached));
-    m_offscreenReadbackMapped = m_offscreenReadback->map();
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_offscreenReadback[i] = std::make_unique<VK_Buffer>(m_context);
+        NX_RETURN_IF_ERROR(m_offscreenReadback[i]->create(size, vk::BufferUsageFlagBits::eTransferDst, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCached));
+        m_offscreenReadbackMapped[i] = m_offscreenReadback[i]->map();
+    }
 
     return OkStatus();
 }
@@ -1068,35 +1072,36 @@ void VK_Renderer::recordOffscreenCommandBuffer(vk::CommandBuffer commandBuffer, 
     region.imageOffset = vk::Offset3D{0, 0, 0};
     region.imageExtent = vk::Extent3D{m_offscreenExtent.width, m_offscreenExtent.height, 1};
 
-    commandBuffer.copyImageToBuffer(m_offscreenColor->getImage(), vk::ImageLayout::eTransferSrcOptimal, m_offscreenReadback->getHandle(), 1, &region);
+    commandBuffer.copyImageToBuffer(m_offscreenColor->getImage(), vk::ImageLayout::eTransferSrcOptimal, m_offscreenReadback[m_currentFrame]->getHandle(), 1, &region);
 
     vk::BufferMemoryBarrier bufBarrier;
     bufBarrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
     bufBarrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
     bufBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     bufBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    bufBarrier.buffer = m_offscreenReadback->getHandle();
+    bufBarrier.buffer = m_offscreenReadback[m_currentFrame]->getHandle();
     bufBarrier.offset = 0;
     bufBarrier.size = VK_WHOLE_SIZE;
-
+    
     commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eHost, {}, 0, nullptr, 1, &bufBarrier, 0, nullptr);
 
     m_offscreenReady = true;
 }
 
-bool VK_Renderer::getOffscreenPixels(std::vector<uint8_t>& outPixels) {
-    if (!m_offscreenReady || !m_offscreenReadbackMapped) return false;
+void* VK_Renderer::getLatestOffscreenData(size_t& outSize, int& outWidth, int& outHeight) {
+    int readIdx = m_latestReadbackIndex.load(std::memory_order_acquire);
+    if (!m_offscreenReady || readIdx < 0 || !m_offscreenReadbackMapped[readIdx]) return nullptr;
 
     vk::MappedMemoryRange range;
-    range.memory = m_offscreenReadback->getMemory();
+    range.memory = m_offscreenReadback[readIdx]->getMemory();
     range.offset = 0;
     range.size = VK_WHOLE_SIZE;
     (void)m_device.invalidateMappedMemoryRanges(1, &range);
 
-    size_t size = m_offscreenExtent.width * m_offscreenExtent.height * 4;
-    outPixels.resize(size);
-    memcpy(outPixels.data(), m_offscreenReadbackMapped, size);
-    return true;
+    outSize = m_offscreenExtent.width * m_offscreenExtent.height * 4;
+    outWidth = m_offscreenExtent.width;
+    outHeight = m_offscreenExtent.height;
+    return m_offscreenReadbackMapped[readIdx];
 }
 
 Status VK_Renderer::onResize(uint32_t width, uint32_t height) {
@@ -1126,12 +1131,15 @@ void VK_Renderer::updateWindowSize(int width, int height) {
     (void)onResize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
 }
 Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
+    auto __t0 = std::chrono::high_resolution_clock::now();
     uint32_t imageIndex;
     NX_RETURN_IF_ERROR(beginFrame(imageIndex));
+    auto __t1 = std::chrono::high_resolution_clock::now();
 
     if (snapshot) {
         uploadSnapshotData(snapshot);
     }
+    auto __t2 = std::chrono::high_resolution_clock::now();
 
     vk::CommandBufferBeginInfo beginInfo;
     if (m_commandBuffers[m_currentFrame].begin(&beginInfo) != vk::Result::eSuccess) {
@@ -1145,8 +1153,8 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
         size_t cmdOffset = (m_currentFrame * objCap) * sizeof(DrawIndexedIndirectCommand);
 
         if (m_localObjectData.size() < activeCount) {
-            m_localObjectData.resize(activeCount, ObjectData{});
-            m_localIndirectCommands.resize(activeCount, DrawIndexedIndirectCommand{});
+            m_localObjectData.resize(activeCount + 1000, ObjectData{});
+            m_localIndirectCommands.resize(activeCount + 1000, DrawIndexedIndirectCommand{});
         }
 
         PersistentSlotUpdate update;
@@ -1166,18 +1174,42 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
         m_objectDataBuffer->uploadData(m_localObjectData.data(), activeCount * sizeof(ObjectData), objOffset);
         m_persistentCommandBuffer->uploadData(m_localIndirectCommands.data(), activeCount * sizeof(DrawIndexedIndirectCommand), cmdOffset);
     }
+    auto __t3 = std::chrono::high_resolution_clock::now();
 
     recordComputeCulling(m_commandBuffers[m_currentFrame]);
+    auto __t4 = std::chrono::high_resolution_clock::now();
 
     if (m_visionSensorEntity != entt::null && snapshot) {
         recordOffscreenCommandBuffer(m_commandBuffers[m_currentFrame], snapshot);
     }
+    auto __t5 = std::chrono::high_resolution_clock::now();
 
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
+    auto __t6 = std::chrono::high_resolution_clock::now();
 
     (void)m_commandBuffers[m_currentFrame].end();
+    auto __t7 = std::chrono::high_resolution_clock::now();
 
     endFrame(imageIndex);
+    auto __t8 = std::chrono::high_resolution_clock::now();
+
+    static int __rf_frame = 0;
+    static float s_bF=0, s_up=0, s_obj=0, s_cull=0, s_off=0, s_rec=0, s_end=0, s_eF=0;
+    s_bF += std::chrono::duration<float, std::milli>(__t1 - __t0).count();
+    s_up += std::chrono::duration<float, std::milli>(__t2 - __t1).count();
+    s_obj += std::chrono::duration<float, std::milli>(__t3 - __t2).count();
+    s_cull += std::chrono::duration<float, std::milli>(__t4 - __t3).count();
+    s_off += std::chrono::duration<float, std::milli>(__t5 - __t4).count();
+    s_rec += std::chrono::duration<float, std::milli>(__t6 - __t5).count();
+    s_end += std::chrono::duration<float, std::milli>(__t7 - __t6).count();
+    s_eF += std::chrono::duration<float, std::milli>(__t8 - __t7).count();
+
+    if (++__rf_frame >= 60) {
+        NX_CORE_INFO("RENDER CPU PROFILE: beginFrame={:.2f}ms, upload={:.2f}ms, objectData={:.2f}ms, cull={:.2f}ms, offscreen={:.2f}ms, mainCmd={:.2f}ms, endCmd={:.2f}ms, endFrame={:.2f}ms", 
+                     s_bF/60.0f, s_up/60.0f, s_obj/60.0f, s_cull/60.0f, s_off/60.0f, s_rec/60.0f, s_end/60.0f, s_eF/60.0f);
+        __rf_frame = 0; s_bF=0; s_up=0; s_obj=0; s_cull=0; s_off=0; s_rec=0; s_end=0; s_eF=0;
+    }
+
     return OkStatus();
 }
 
@@ -1190,6 +1222,9 @@ Status VK_Renderer::beginFrame(uint32_t& imageIndex) {
     auto t0 = std::chrono::high_resolution_clock::now();
     if (m_device.waitForFences(1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
         return InternalError("Wait for fences failed");
+    }
+    if (m_offscreenReady) {
+        m_latestReadbackIndex.store(m_currentFrame, std::memory_order_release);
     }
     auto t1 = std::chrono::high_resolution_clock::now();
     vk::Result acquireResult = m_device.acquireNextImageKHR(m_swapchain->getHandle(), UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], vk::Fence(), &imageIndex);

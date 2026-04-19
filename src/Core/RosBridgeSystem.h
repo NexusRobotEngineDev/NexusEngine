@@ -18,7 +18,7 @@ namespace Core {
  * 启动一个后台线程通过 ZMQ (PUB/SUB 或 REQ/REP) 将机器狗的状态广播出去，
  * 并接收外部力矩控制指令，将其作用回 MuJoCo 物理引擎。
  */
-class RosBridgeSystem {
+class RosBridgeSystem : public IVisionBridge {
 public:
     RosBridgeSystem();
     ~RosBridgeSystem();
@@ -54,9 +54,9 @@ public:
     void publishModelInfo(IPhysicsSystem* physicsSystem);
 
     /**
-     * @brief 发送视觉传感器图像
+     * @brief 继承于 IVisionBridge: 推流离屏像素
      */
-    void publishImage(const std::vector<uint8_t>& imagePixels, int width, int height);
+    void streamImage(const void* mappedData, size_t size, int width, int height) override;
 
     /**
      * @brief 设置当前机器人的标识信息

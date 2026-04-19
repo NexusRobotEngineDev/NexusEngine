@@ -1,7 +1,7 @@
 body {
     font-family: Arial;
     font-size: 14dp;
-    color: #e0e0e0;
+    color: #cdd6f4;
     width: 100%;
     height: 100%;
     margin: 0;
@@ -22,19 +22,19 @@ body {
     flex-direction: column;
     min-width: 200dp;
     max-width: 400dp;
-    background-color: #1e1e2ecc;
-    border: 1dp #3a3a5a;
+    background-color: #11111bcc;
+    border: 1dp #313244;
     overflow: hidden;
 }
 
 .dock-zone.left {
     width: 260dp;
-    border-right: 2dp #4a4a6a;
+    border-right: 2dp #313244;
 }
 
 .dock-zone.right {
     width: 260dp;
-    border-left: 2dp #4a4a6a;
+    border-left: 2dp #313244;
 }
 
 /* 中心视口区域 */
@@ -48,7 +48,7 @@ body {
 .dock-zone.bottom {
     width: 100%;
     height: 180dp;
-    border-top: 2dp #4a4a6a;
+    border-top: 2dp #313244;
 }
 
 /* 可拖拽面板 */
@@ -56,11 +56,12 @@ body {
     display: flex;
     flex-direction: column;
     flex: 1;
-    background-color: #252538ee;
-    border: 1dp #505080;
+    background-color: #181825ee;
+    border: 1dp #45475a;
     margin: 4dp;
     padding: 0;
     overflow: hidden;
+    border-radius: 4dp;
 }
 
 .panel .title-bar {
@@ -68,16 +69,18 @@ body {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    background-color: #363658;
+    background-color: #1e1e2e;
     padding: 6dp 10dp;
     cursor: move;
     drag: drag;
+    border-top-left-radius: 3dp;
+    border-top-right-radius: 3dp;
 }
 
 .panel .title-bar .title-text {
     font-size: 13dp;
     font-weight: bold;
-    color: #c0c0ff;
+    color: #89b4fa;
 }
 
 .panel .panel-content {
@@ -90,38 +93,39 @@ body {
 .panel.floating {
     position: absolute;
     z-index: 100;
-    box-shadow: #00000088 4dp 4dp 12dp;
-    border: 1dp #8080ff;
+    box-shadow: #00000099 4dp 4dp 16dp;
+    border: 1dp #b4befe;
 }
 
 /* Dock 区域高亮 (拖拽悬停时) */
 .dock-zone.highlight {
-    background-color: #2a2a5acc;
-    border: 2dp #8080ff;
+    background-color: #313244cc;
+    border: 2dp #b4befe;
 }
 
 /* 通用按钮 */
 button {
-    background-color: #3a3a5a;
-    color: #d0d0ff;
-    border: 1dp #505080;
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1dp #45475a;
     padding: 4dp 12dp;
     cursor: pointer;
+    border-radius: 4dp;
 }
 
 button:hover {
-    background-color: #4a4a7a;
+    background-color: #45475a;
 }
 
 /* Tree View */
-.tree-node { display: block; padding-left: 10dp; cursor: pointer; padding-top: 2dp; padding-bottom: 2dp; }
-.tree-node:hover { background-color: #3a3a60; }
-.tree-node.selected { background-color: #007acc; color: #ffffff; }
+.tree-node { display: block; padding-left: 10dp; cursor: pointer; padding-top: 4dp; padding-bottom: 4dp; border-radius: 4dp; }
+.tree-node:hover { background-color: #313244; }
+.tree-node.selected { background-color: #89b4fa; color: #11111b; font-weight: bold; }
 
 /* Property Fields */
-.prop-row { display: flex; flex-direction: row; justify-content: space-between; margin-bottom: 4dp; }
-.prop-label { width: 40%; color: #aaaacc; }
-.prop-value { width: 55%; background-color: #1e1e2e; border: 1dp #4a4a6a; color: #ffffff; padding: 2dp; }
+.prop-row { display: flex; flex-direction: row; justify-content: space-between; margin-bottom: 6dp; align-items: center; }
+.prop-label { width: 40%; color: #bac2de; }
+.prop-value { width: 55%; background-color: #11111b; border: 1dp #45475a; color: #cdd6f4; padding: 4dp; border-radius: 4dp; }
 
 /* Scrollbars */
 scrollbarvertical,

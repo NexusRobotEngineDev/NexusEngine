@@ -156,6 +156,7 @@ struct MeshComponent {
     std::array<float, 4> albedoFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;
+    bool isVisible = true;
 
     template<class Archive>
     void serialize(Archive& ar) {

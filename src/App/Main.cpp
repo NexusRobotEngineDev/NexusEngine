@@ -245,30 +245,32 @@ Status InitializeEngine(const EngineConfig& config, bool onlineMode, bool disabl
     NX_CORE_INFO("Main: Calling SceneLoader::createEntities");
     (void)SceneLoader::createEntities(sceneConfig, g_scene.get(), g_renderer.get(), g_textureManager.get());
 
-    NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
-    std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
-    Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), static_cast<Core::RenderSystem*>(g_renderer.get()), cesiumCachePath, onlineMode);
+    if (sceneConfig.enableGis) {
+        NX_CORE_INFO("Main: Calling Cesium3DTilesetSystem::initialize");
+        std::string cesiumCachePath = ResourceLoader::getBasePath() + ".cache/cesium";
+        Cesium3DTilesetSystem::initialize(g_scene.get(), g_context, g_textureManager.get(), static_cast<Core::RenderSystem*>(g_renderer.get()), cesiumCachePath, onlineMode);
 
-    NX_CORE_INFO("Main: Creating Cesium Test Entity");
-    Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
-    auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
-    georef.m_longitude = 121.5;
-    georef.m_latitude = 25.0;
-    georef.m_height = 50.0;
+        NX_CORE_INFO("Main: Creating Cesium Test Entity");
+        Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
+        auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
+        georef.m_longitude = 121.5;
+        georef.m_latitude = 25.0;
+        georef.m_height = 50.0;
 
     auto cameraView = g_scene->getRegistry().view<CameraComponent, TransformComponent>();
     for (auto c : cameraView) {
         auto& cam = cameraView.get<CameraComponent>(c);
     }
 
-    auto& tileset = cesiumEnt.addComponent<Cesium3DTileset>();
-    tileset.m_ionAssetId = 2275207;
-    const char* ionToken = getenv("CESIUM_ION_TOKEN");
-    if (ionToken) {
-        tileset.m_ionAccessToken = ionToken;
-    } else {
-        tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YzFmM2RhZC0wZTM1LTQwNTgtOGJhNy00YzQ3MDAyN2IxNjQiLCJpZCI6NDEyMDc2LCJpYXQiOjE3NzUwMTI2ODl9.JFwAvTfQCe8wvmczvyfqbP8BvwxjZ09WLjZpF7U4rhU";
-        NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
+        auto& tileset = cesiumEnt.addComponent<Cesium3DTileset>();
+        tileset.m_ionAssetId = 2275207;
+        const char* ionToken = getenv("CESIUM_ION_TOKEN");
+        if (ionToken) {
+            tileset.m_ionAccessToken = ionToken;
+        } else {
+            tileset.m_ionAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YzFmM2RhZC0wZTM1LTQwNTgtOGJhNy00YzQ3MDAyN2IxNjQiLCJpZCI6NDEyMDc2LCJpYXQiOjE3NzUwMTI2ODl9.JFwAvTfQCe8wvmczvyfqbP8BvwxjZ09WLjZpF7U4rhU";
+            NX_CORE_WARN("CESIUM_ION_TOKEN not set in environment, using fallback token.");
+        }
     }
 
     if (!disableSensors) {
@@ -431,6 +433,8 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
 
         if (isVisionSensor) {
             camera.aspect = 640.0f / 480.0f;
+            camera.nearPlane = 0.05f;
+            camera.farPlane = 1000.0f;
         } else {
             camera.aspect = (float)width / ((float)height + 0.0001f);
         }
@@ -522,10 +526,6 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         auto& mesh = meshView.get<MeshComponent>(entity);
         auto& transform = meshView.get<TransformComponent>(entity);
 
-        if (registry.has<CesiumGltfComponent>(entity)) {
-            continue;
-        }
-
         if (mesh.useMeshShader && mesh.meshletCount > 0 && engineSupportsMeshShaders) {
             RenderSnapshot::MeshletDrawEntry entry;
             entry.meshletOffset = mesh.meshletOffset;
@@ -551,8 +551,19 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         obj.albedoFactor = mesh.albedoFactor;
         obj.metallicFactor = mesh.metallicFactor;
         obj.roughnessFactor = mesh.roughnessFactor;
-        obj.isVisible = 1;
-        obj.worldMatrix = transform.worldMatrix;
+        obj.isVisible = mesh.isVisible ? 1 : 0;
+        
+        if (registry.has<CesiumGltfComponent>(entity)) {
+            obj.worldMatrix = {
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f
+            };
+        } else {
+            obj.worldMatrix = transform.worldMatrix;
+        }
+
         obj.boundingSphere = mesh.boundingSphere;
 
         bool isSelected = ((uint32_t)entity == selectedId);
@@ -627,25 +638,21 @@ void RunMainLoop() {
         lastFrameTime = now;
 
         if (g_scene) {
-            static auto fpsStartTime = now;
-            static int frameCount = 0;
-            frameCount++;
-            float elapsedFpsTime = std::chrono::duration<float>(now - fpsStartTime).count();
-            if (elapsedFpsTime >= 0.5f) {
-                float fps = frameCount / elapsedFpsTime;
-                float frameTime = (elapsedFpsTime * 1000.0f) / frameCount;
-                float avgLogic = (float)(accumLogicTime / frameCount);
-                float avgSync = (float)(accumSyncTime / frameCount);
-                float avgPrep = (float)(accumPrepTime / frameCount);
+            static auto logicStatStartTime = now;
+            static int logicFrameCount = 0;
+            logicFrameCount++;
+            float elapsedLogicTime = std::chrono::duration<float>(now - logicStatStartTime).count();
+            if (elapsedLogicTime >= 0.5f) {
+                float avgLogic = (float)(accumLogicTime / logicFrameCount);
+                float avgSync = (float)(accumSyncTime / logicFrameCount);
+                float avgPrep = (float)(accumPrepTime / logicFrameCount);
 
-                g_RenderStats_FPS.store(fps, std::memory_order_relaxed);
-                g_RenderStats_FrameTime.store(frameTime, std::memory_order_relaxed);
                 g_RenderStats_LogicTime.store(avgLogic, std::memory_order_relaxed);
                 g_RenderStats_RenderSyncTime.store(avgSync, std::memory_order_relaxed);
                 g_RenderStats_RenderPrepTime.store(avgPrep, std::memory_order_relaxed);
 
-                fpsStartTime = now;
-                frameCount = 0;
+                logicStatStartTime = now;
+                logicFrameCount = 0;
                 accumLogicTime = 0.0;
                 accumSyncTime = 0.0;
                 accumPrepTime = 0.0;
@@ -785,8 +792,6 @@ void RunMainLoop() {
             accumLogicTime += std::chrono::duration<double, std::milli>(logicEndTime - logicStartTime).count();
 
             auto syncStartTime = std::chrono::high_resolution_clock::now();
-            while (g_rhiThread->getQueueSize() >= 2) {
-            }
             auto syncEndTime = std::chrono::high_resolution_clock::now();
             accumSyncTime += std::chrono::duration<double, std::milli>(syncEndTime - syncStartTime).count();
 
@@ -837,25 +842,41 @@ void RunMainLoop() {
 
             accumPrepTime += std::chrono::duration<double, std::milli>(prepEndTime - prepStartTime).count();
 
-            static RenderSnapshot sm_snapshots[4];
-            static uint32_t sm_currentSnapshot = 0;
+            if (g_rhiThread->getQueueSize() < 2) {
+                static RenderSnapshot sm_snapshots[4];
+                static uint32_t sm_currentSnapshot = 0;
 
-            RenderSnapshot* activeSnapshot = &sm_snapshots[sm_currentSnapshot];
-            activeSnapshot->clear();
-            if (g_scene) {
-                buildSnapshotFromRegistry(g_scene->getRegistry(), activeSnapshot);
+                RenderSnapshot* activeSnapshot = &sm_snapshots[sm_currentSnapshot];
+                activeSnapshot->clear();
+                if (g_scene) {
+                    buildSnapshotFromRegistry(g_scene->getRegistry(), activeSnapshot);
+                }
+
+                RenderCommand cmd;
+                cmd.type = RenderCommandType::Draw;
+                cmd.snapshot = activeSnapshot;
+                g_rhiThread->pushCommand(cmd);
+
+                sm_currentSnapshot = (sm_currentSnapshot + 1) % 4;
             }
 
-            RenderCommand cmd;
-            cmd.type = RenderCommandType::Draw;
-            cmd.snapshot = activeSnapshot;
-            g_rhiThread->pushCommand(cmd);
-
-            sm_currentSnapshot = (sm_currentSnapshot + 1) % 4;
-
-            std::vector<uint8_t> pixels;
-            if (g_renderer && g_renderer->getBridgeRenderer()->getOffscreenPixels(pixels)) {
-                if (g_rosBridge) g_rosBridge->publishImage(pixels, 640, 480);
+            auto tt_a = std::chrono::high_resolution_clock::now();
+            if (g_renderer && g_rosBridge) {
+                size_t outSize = 0; int outWidth = 0, outHeight = 0;
+                void* data = g_renderer->getBridgeRenderer()->getLatestOffscreenData(outSize, outWidth, outHeight);
+                auto tt_b = std::chrono::high_resolution_clock::now();
+                if (data && outSize > 0) {
+                    static_cast<IVisionBridge*>(g_rosBridge.get())->streamImage(data, outSize, outWidth, outHeight);
+                }
+                auto tt_c = std::chrono::high_resolution_clock::now();
+                
+                static float sa = 0, sb = 0; static int sc = 0;
+                sa += std::chrono::duration<float, std::milli>(tt_b - tt_a).count();
+                sb += std::chrono::duration<float, std::milli>(tt_c - tt_b).count();
+                if (++sc >= 10) {
+                    NX_CORE_INFO("Main App Vision Profile: getLatestOffscreenData={:.2f}ms, streamImage={:.2f}ms", sa/10.0f, sb/10.0f);
+                    sa = 0; sb = 0; sc = 0;
+                }
             }
         }
 #else

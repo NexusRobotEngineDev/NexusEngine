@@ -26,7 +26,9 @@ Status MuJoCo_PhysicsSystem::loadModel(const std::string& path) {
     }
 
     m_actuatorName2Id.clear();
-    m_pendingCommands.clear();
+    m_localCmds.clear();
+    JointCmdEvent dummy;
+    while(m_cmdQueue.try_dequeue(dummy)) {}
     m_timeStepAccumulator = 0.0;
 
     char error[1000] = "Could not load binary model";
@@ -63,62 +65,64 @@ void MuJoCo_PhysicsSystem::shutdown() {
     }
 
     m_actuatorName2Id.clear();
-    m_pendingCommands.clear();
+    m_localCmds.clear();
+    JointCmdEvent dummy;
+    while(m_cmdQueue.try_dequeue(dummy)) {}
 
     NX_CORE_INFO("MuJoCo Physics System Shutdown");
 }
 
 void MuJoCo_PhysicsSystem::resetSimulation() {
     if (!m_model || !m_data) return;
-    std::lock_guard<std::mutex> lock(m_cmdMutex);
-    mj_resetData(m_model, m_data);
-    mj_forward(m_model, m_data);
-    m_pendingCommands.clear();
-    m_timeStepAccumulator = 0.0;
-    NX_CORE_INFO("MuJoCo 仿真已重置到初始状态");
+    m_resetRequested.store(true, std::memory_order_release);
+    NX_CORE_INFO("MuJoCo 仿真重置请求已发送至物理线程");
 }
 
 void MuJoCo_PhysicsSystem::update(float deltaTime) {
     if (m_model && m_data) {
-        bool isPaused = false;
-        {
-            std::lock_guard<std::mutex> lock(m_cmdMutex);
-            if (m_pendingCommands.empty()) {
-                isPaused = true;
-            }
+        if (m_resetRequested.exchange(false, std::memory_order_acquire)) {
+            mj_resetData(m_model, m_data);
+            mj_forward(m_model, m_data);
+            m_localCmds.clear();
+            JointCmdEvent dummy;
+            while(m_cmdQueue.try_dequeue(dummy)) {}
+            m_timeStepAccumulator = 0.0;
+            NX_CORE_INFO("MuJoCo 仿真已由物理线程执行重置");
         }
+
+        JointCmdEvent evt;
+        while(m_cmdQueue.try_dequeue(evt)) {
+            m_localCmds[evt.actuatorId] = evt;
+        }
+
+        bool isPaused = m_localCmds.empty();
 
         if (isPaused) {
             static int bootstrapCounter = 0;
             if (m_stateCallback && (++bootstrapCounter % 20 == 0)) {
                 m_stateCallback(m_model, m_data);
             }
-            return;
-        }
+        } else {
+            m_timeStepAccumulator += deltaTime;
 
-        m_timeStepAccumulator += deltaTime;
+            while (m_timeStepAccumulator >= m_model->opt.timestep) {
+            for(const auto& [actuatorId, cmd] : m_localCmds) {
+                if (std::isnan(cmd.q) || std::isnan(cmd.kp) || std::isinf(cmd.q)) continue;
 
-        while (m_timeStepAccumulator >= m_model->opt.timestep) {
-            {
-                std::lock_guard<std::mutex> lock(m_cmdMutex);
-                for(const auto& [actuatorId, cmd] : m_pendingCommands) {
-                    if (std::isnan(cmd.q) || std::isnan(cmd.kp) || std::isinf(cmd.q)) continue;
+                int trnid = m_model->actuator_trnid[actuatorId * 2];
+                float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
+                float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
+                float ctrl = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
 
-                    int trnid = m_model->actuator_trnid[actuatorId * 2];
-                    float current_q = (float)m_data->qpos[m_model->jnt_qposadr[trnid]];
-                    float current_dq = (float)m_data->qvel[m_model->jnt_dofadr[trnid]];
-                    float ctrl = cmd.kp * (cmd.q - current_q) + cmd.kd * (cmd.dq - current_dq) + cmd.tau;
+                if (std::isnan(ctrl) || std::isinf(ctrl)) continue;
 
-                    if (std::isnan(ctrl) || std::isinf(ctrl)) continue;
-
-                    float frcLo = (float)m_model->actuator_ctrlrange[actuatorId * 2];
-                    float frcHi = (float)m_model->actuator_ctrlrange[actuatorId * 2 + 1];
-                    if (frcLo < frcHi) {
-                        ctrl = std::clamp(ctrl, frcLo, frcHi);
-                    }
-
-                    m_data->ctrl[actuatorId] = ctrl;
+                float frcLo = (float)m_model->actuator_ctrlrange[actuatorId * 2];
+                float frcHi = (float)m_model->actuator_ctrlrange[actuatorId * 2 + 1];
+                if (frcLo < frcHi) {
+                    ctrl = std::clamp(ctrl, frcLo, frcHi);
                 }
+
+                m_data->ctrl[actuatorId] = ctrl;
             }
             mj_step(m_model, m_data);
             m_timeStepAccumulator -= m_model->opt.timestep;
@@ -127,7 +131,25 @@ void MuJoCo_PhysicsSystem::update(float deltaTime) {
             if (m_stateCallback && (m_substepCounter % m_stateDecimation == 0)) {
                 m_stateCallback(m_model, m_data);
             }
+            }
         }
+
+        auto& backBuffer = m_snapshots[m_writeSnapshotIndex];
+        if (backBuffer.bodyTransforms.size() != m_model->nbody) {
+            backBuffer.bodyTransforms.resize(m_model->nbody);
+        }
+
+        for (int i = 0; i < m_model->nbody; ++i) {
+            backBuffer.bodyTransforms[i].pos[0] = m_data->xpos[3 * i + 0];
+            backBuffer.bodyTransforms[i].pos[1] = m_data->xpos[3 * i + 1];
+            backBuffer.bodyTransforms[i].pos[2] = m_data->xpos[3 * i + 2];
+            backBuffer.bodyTransforms[i].quat[0] = m_data->xquat[4 * i + 0];
+            backBuffer.bodyTransforms[i].quat[1] = m_data->xquat[4 * i + 1];
+            backBuffer.bodyTransforms[i].quat[2] = m_data->xquat[4 * i + 2];
+            backBuffer.bodyTransforms[i].quat[3] = m_data->xquat[4 * i + 3];
+        }
+
+        m_writeSnapshotIndex = m_readySnapshotIndex.exchange(m_writeSnapshotIndex, std::memory_order_release);
     }
 }
 
@@ -136,8 +158,10 @@ void MuJoCo_PhysicsSystem::setJointControl(const std::string& jointName, float q
 
     auto it = m_actuatorName2Id.find(jointName);
     if (it != m_actuatorName2Id.end()) {
-        std::lock_guard<std::mutex> lock(m_cmdMutex);
-        m_pendingCommands[it->second] = {q, dq, kp, kd, tau};
+        JointCmdEvent evt;
+        evt.actuatorId = it->second;
+        evt.q = q; evt.dq = dq; evt.kp = kp; evt.kd = kd; evt.tau = tau;
+        m_cmdQueue.enqueue(evt);
     }
 }
 
@@ -147,14 +171,19 @@ bool MuJoCo_PhysicsSystem::getBodyTransform(const std::string& name, std::array<
     int bodyId = mj_name2id(m_model, mjOBJ_BODY, name.c_str());
     if (bodyId == -1) return false;
 
-    outPos[0] = m_data->xpos[3 * bodyId + 0];
-    outPos[1] = m_data->xpos[3 * bodyId + 1];
-    outPos[2] = m_data->xpos[3 * bodyId + 2];
+    int readIdx = m_readySnapshotIndex.load(std::memory_order_acquire);
+    if (readIdx < 0 || readIdx > 2 || m_snapshots[readIdx].bodyTransforms.size() <= bodyId) return false;
 
-    outRot[3] = m_data->xquat[4 * bodyId + 0];
-    outRot[0] = m_data->xquat[4 * bodyId + 1];
-    outRot[1] = m_data->xquat[4 * bodyId + 2];
-    outRot[2] = m_data->xquat[4 * bodyId + 3];
+    const auto& bodyTrans = m_snapshots[readIdx].bodyTransforms[bodyId];
+
+    outPos[0] = static_cast<float>(bodyTrans.pos[0]);
+    outPos[1] = static_cast<float>(bodyTrans.pos[1]);
+    outPos[2] = static_cast<float>(bodyTrans.pos[2]);
+
+    outRot[3] = static_cast<float>(bodyTrans.quat[0]); // w
+    outRot[0] = static_cast<float>(bodyTrans.quat[1]); // x
+    outRot[1] = static_cast<float>(bodyTrans.quat[2]); // y
+    outRot[2] = static_cast<float>(bodyTrans.quat[3]); // z
 
     return true;
 }

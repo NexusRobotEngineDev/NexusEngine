@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <functional>
+#include <concurrentqueue/concurrentqueue.h>
 
 namespace Nexus {
 
@@ -34,21 +35,46 @@ public:
     mjData*  m_data  = nullptr;
 
 private:
-    struct JointCmd {
+    struct JointCmdEvent {
+        int actuatorId = -1;
         float q = 0.0f;
         float dq = 0.0f;
         float kp = 0.0f;
         float kd = 0.0f;
         float tau = 0.0f;
     };
+
+public:
+    struct BodyTransform {
+        double pos[3] = {0.0, 0.0, 0.0};
+        double quat[4] = {1.0, 0.0, 0.0, 0.0};
+    };
+
+    struct PhysicsSnapshot {
+        std::vector<BodyTransform> bodyTransforms;
+    };
+
+    PhysicsSnapshot m_snapshots[3];
+    std::atomic<int> m_readySnapshotIndex{0};
+    int m_writeSnapshotIndex = 1; 
+    int m_readSnapshotIndex = 2;  
+
+    int acquireReadSnapshot() {
+        m_readSnapshotIndex = m_readySnapshotIndex.exchange(m_readSnapshotIndex, std::memory_order_acquire);
+        return m_readSnapshotIndex;
+    }
+
+private:
+
     static void* allocate(size_t size) { return malloc(size); }
     static void free(void* ptr) { ::free(ptr); }
     static void* reallocate(void* ptr, size_t size) { return realloc(ptr, size); }
 
     double m_timeStepAccumulator = 0.0;
     std::unordered_map<std::string, int> m_actuatorName2Id;
-    std::unordered_map<int, JointCmd> m_pendingCommands;
-    std::mutex m_cmdMutex;
+    moodycamel::ConcurrentQueue<JointCmdEvent> m_cmdQueue;
+    std::unordered_map<int, JointCmdEvent> m_localCmds;
+    std::atomic<bool> m_resetRequested{false};
 
     StateCallback m_stateCallback;
     int m_stateDecimation = 7;

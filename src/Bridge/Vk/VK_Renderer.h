@@ -65,7 +65,7 @@ public:
     VK_UIBridge* getUIBridge() { return m_uiBridge.get(); }
 
     void setVisionSensorCamera(entt::entity camEntity) { m_visionSensorEntity = camEntity; }
-    bool getOffscreenPixels(std::vector<uint8_t>& outPixels);
+    void* getLatestOffscreenData(size_t& outSize, int& outWidth, int& outHeight);
 
     /**
      * @brief 等待设备空闲
@@ -162,8 +162,10 @@ private:
 
     std::unique_ptr<VK_Texture> m_offscreenColor;
     std::unique_ptr<VK_Texture> m_offscreenDepth;
-    std::unique_ptr<VK_Buffer> m_offscreenReadback;
-    void* m_offscreenReadbackMapped = nullptr;
+    std::unique_ptr<VK_Buffer> m_offscreenReadback[MAX_FRAMES_IN_FLIGHT];
+    void* m_offscreenReadbackMapped[MAX_FRAMES_IN_FLIGHT] = {nullptr};
+    std::atomic<int> m_latestReadbackIndex{-1};
+    
     vk::Extent2D m_offscreenExtent = {640, 480};
     entt::entity m_visionSensorEntity = entt::null;
     bool m_offscreenReady = false;

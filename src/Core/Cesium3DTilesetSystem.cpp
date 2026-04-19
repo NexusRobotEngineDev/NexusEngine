@@ -61,6 +61,7 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
         glm::dvec3 up;
         double aspect;
         double fovY;
+        bool isVisionSensor = false;
     };
     std::vector<CameraState> activeCameras;
 
@@ -112,9 +113,12 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
             if (state.aspect <= 0.01) state.aspect = 1920.0 / 1080.0;
             state.fovY = camera.fov;
 
+            state.fovY = camera.fov;
+
             mainCameraFound = true;
         }
 
+        state.isVisionSensor = isVisionSensor;
         activeCameras.push_back(state);
     }
 
@@ -187,7 +191,7 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
             glm::dvec3 ecefDirection = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuDirection);
             glm::dvec3 ecefUp = geoRef.m_localCoordinateSystem->localDirectionToEcef(camEnuUp);
 
-            double baseHeight = 1080.0;
+            double baseHeight = cam.isVisionSensor ? 120.0 : 1080.0;
             double baseWidth = baseHeight * cam.aspect;
 
             Cesium3DTilesSelection::ViewState viewState = Cesium3DTilesSelection::ViewState::create(
@@ -228,15 +232,11 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
                 g_prepareRes->setEcefToLocalYUp(ecefToLocalYUp);
             }
 
-            auto bridge = g_tilesetRenderSystem ? g_tilesetRenderSystem->getBridgeRenderer() : nullptr;
-
             auto viewMeshes = registry.view<CesiumGltfComponent, MeshComponent>();
             size_t cesiumEntityCount = 0;
             for (auto e : viewMeshes) {
                 auto& mesh = viewMeshes.get<MeshComponent>(e);
-                if (bridge && mesh.persistentSlot != 0xFFFFFFFF) {
-                    bridge->setPersistentSlotVisibility(mesh.persistentSlot, false);
-                }
+                mesh.isVisible = false;
                 cesiumEntityCount++;
             }
 
@@ -263,10 +263,8 @@ void Cesium3DTilesetSystem::update(Nexus::Registry& registry, float dt) {
                 for (auto e : pRenderRes->entities) {
                     if (registry.valid(e) && registry.has<MeshComponent>(e)) {
                         auto& mesh = registry.get<MeshComponent>(e);
-                        if (bridge && mesh.persistentSlot != 0xFFFFFFFF) {
-                            bridge->setPersistentSlotVisibility(mesh.persistentSlot, true);
-                            tilesRendered++;
-                        }
+                        mesh.isVisible = true;
+                        tilesRendered++;
                     }
                 }
             }

@@ -259,18 +259,18 @@ void RosBridgeSystem::publishModelInfo(IPhysicsSystem* physicsSystem) {
     m_impl->publisher->send(zmq::message_t(listPayload.data(), listPayload.size()), zmq::send_flags::none);
 }
 
-void RosBridgeSystem::publishImage(const std::vector<uint8_t>& imagePixels, int width, int height) {
-    if (!m_impl->initialized || imagePixels.empty()) return;
+void RosBridgeSystem::streamImage(const void* mappedData, size_t size, int width, int height) {
+    if (!m_impl->initialized || !mappedData || size == 0) return;
 
     static int imgLog = 0;
     if (imgLog++ % 100 == 0) {
-        NX_CORE_INFO("RosBridgeSystem::publishImage CALLED! len: {}", imagePixels.size());
+        NX_CORE_INFO("RosBridgeSystem::streamImage CALLED! len: {}", size);
     }
 
     std::string topic = "vision:" + m_impl->robotId;
     std::lock_guard<std::mutex> lock(m_impl->pubMutex);
     m_impl->publisher->send(zmq::message_t(topic.data(), topic.size()), zmq::send_flags::sndmore);
-    m_impl->publisher->send(zmq::message_t(imagePixels.data(), imagePixels.size()), zmq::send_flags::none);
+    m_impl->publisher->send(zmq::message_t(mappedData, size), zmq::send_flags::none);
 }
 
 void RosBridgeSystem::setRobotInfo(const std::string& robotId, const std::string& robotName) {

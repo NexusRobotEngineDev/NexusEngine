@@ -73,16 +73,19 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     float4 albedo = textures[obj.textureIndex].Sample(samplers[obj.samplerIndex], input.UV) * obj.albedoFactor;
 
-    float3 lightDir = normalize(float3(1.0, 1.0, 1.0));
+    float3 lightDir = normalize(float3(0.5, 1.0, 0.5));
     float3 viewDir = normalize(float3(0.0, 0.0, 1.0));
     float3 halfDir = normalize(lightDir + viewDir);
 
     float3 N = normalize(input.Normal);
     float diff = max(dot(N, lightDir), 0.0);
 
-    float spec = pow(max(dot(N, halfDir), 0.0), 32.0) * obj.metallicFactor;
+    float specPower = exp2(10.0 * (1.0 - obj.roughnessFactor) + 1.0);
+    float specIntensity = (1.0 - obj.roughnessFactor) * obj.metallicFactor;
 
-    float ambient = 0.2;
+    float3 spec = albedo.rgb * pow(max(dot(N, halfDir), 0.0), specPower) * specIntensity;
+
+    float ambient = 0.4;
     float3 finalColor = albedo.rgb * (diff + ambient) + spec;
 
     if (obj.highlightColor.a > 0.0) {

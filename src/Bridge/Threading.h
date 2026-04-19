@@ -10,6 +10,8 @@
 
 namespace Nexus {
 
+extern std::atomic<float> g_RenderStats_FPS;
+extern std::atomic<float> g_RenderStats_FrameTime;
 extern std::atomic<float> g_RenderStats_RenderDrawTime;
 
 class Registry;
@@ -100,7 +102,12 @@ private:
 
                     float elapsed = std::chrono::duration<float>(rtEnd - rtStatStart).count();
                     if (elapsed >= 0.5f) {
+                        float fps = (float)rtFrames / elapsed;
+                        float frameTime = (elapsed * 1000.0f) / rtFrames;
+                        g_RenderStats_FPS.store(fps, std::memory_order_relaxed);
+                        g_RenderStats_FrameTime.store(frameTime, std::memory_order_relaxed);
                         g_RenderStats_RenderDrawTime.store((float)(rtAccum / rtFrames), std::memory_order_relaxed);
+                        
                         rtAccum = 0.0;
                         rtFrames = 0;
                         rtStatStart = rtEnd;
