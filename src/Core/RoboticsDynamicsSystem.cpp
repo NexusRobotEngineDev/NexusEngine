@@ -52,11 +52,13 @@ static void propagatePhysicsZUp(entt::registry& reg, entt::entity entity, const 
         }
 
         if (bodyId >= 0) {
-            const double* pos = mj->m_data->xpos + 3 * bodyId;
-            const double* quat = mj->m_data->xquat + 4 * bodyId;
-            tr.worldMatrix = buildZUpMatrix(pos, quat);
-            currentMatZUp = tr.worldMatrix;
-            gotMuJoCo = true;
+            int readIdx = mj->m_readSnapshotIndex;
+            if (readIdx >= 0 && readIdx <= 2 && mj->m_snapshots[readIdx].bodyTransforms.size() > bodyId) {
+                const auto& bodyTrans = mj->m_snapshots[readIdx].bodyTransforms[bodyId];
+                tr.worldMatrix = buildZUpMatrix(bodyTrans.pos, bodyTrans.quat);
+                currentMatZUp = tr.worldMatrix;
+                gotMuJoCo = true;
+            }
         } else {
             static std::unordered_set<std::string> s_missed;
             if (s_missed.find(rb.bodyName) == s_missed.end()) {
@@ -112,6 +114,8 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
     auto* mj = dynamic_cast<MuJoCo_PhysicsSystem*>(physicsSystem);
     if (!mj || !mj->m_model || !mj->m_data) return;
 
+    mj->acquireReadSnapshot();
+
     auto& reg = registry.getInternal();
     auto view = reg.view<RigidBodyComponent>();
 
@@ -154,13 +158,6 @@ void RoboticsDynamicsSystem::update(Registry& registry, IPhysicsSystem* physicsS
 
         applyOffsetToTree(reg, rootEntity, offsetX, offsetY, offsetZ);
 
-        static int s_printCounter = 0;
-        if (++s_printCounter % 120 == 0) {
-            auto& tr = reg.get<TransformComponent>(rootEntity);
-            const double* pos = mj->m_data->xpos + 3 * mj_name2id(mj->m_model, mjOBJ_BODY, "base_link");
-            NX_CORE_INFO("RoboticsDynamicsSystem: base_link MuJoCo pos=({:.3f}, {:.3f}, {:.3f}), Engine WorldMat trans=({:.3f}, {:.3f}, {:.3f})",
-                 pos[0], pos[1], pos[2], tr.worldMatrix[12], tr.worldMatrix[13], tr.worldMatrix[14]);
-        }
     }
 }
 

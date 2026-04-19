@@ -112,6 +112,24 @@ public:
 };
 
 /**
+ * @brief 视觉数据桥接抽象层
+ * 负责接收引擎后台提取到的原生离屏像素流或者内存句柄，实现各种与控制算法/外部接口的解耦传输。
+ */
+class IVisionBridge {
+public:
+    virtual ~IVisionBridge() = default;
+
+    /**
+     * @brief 推流离屏像素 (CPU 同步模式 / PBO 异步抽提的 CPU 版本)
+     * @param mappedData 指向 CPU 或者映射后 RAM 数据的原生态字节流
+     * @param size 数据长度
+     * @param width 像素宽
+     * @param height 像素高
+     */
+    virtual void streamImage(const void* mappedData, size_t size, int width, int height) = 0;
+};
+
+/**
  * @brief 纹理接口
  */
 class ITexture {
