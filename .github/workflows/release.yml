@@ -201,6 +201,24 @@ jobs:
         EOF
         chmod +x "${DEB_STAGING}/usr/bin/nexusengine"
 
+        mkdir -p "${DEB_STAGING}/usr/share/pixmaps"
+        [ -f "Data/UI/icon.png" ] && cp "Data/UI/icon.png" "${DEB_STAGING}/usr/share/pixmaps/nexusengine.png"
+
+        mkdir -p "${DEB_STAGING}/usr/share/applications"
+        cat > "${DEB_STAGING}/usr/share/applications/nexusengine.desktop" << EOF
+        [Desktop Entry]
+        Version=1.0
+        Name=Nexus Engine
+        Name[zh_CN]=联结引擎
+        Comment=Nexus Engine 3D Application
+        Comment[zh_CN]=面向信创的数字孪生具身智能仿真引擎
+        Exec=/usr/bin/nexusengine
+        Icon=nexusengine
+        Terminal=false
+        Type=Application
+        Categories=Development;Graphics;3DGraphics;
+        EOF
+
         find "${DEB_STAGING}" -type d -exec chmod 755 {} \;
 
         dpkg-deb --build "${DEB_STAGING}" "build/${PKG_NAME}.deb"
@@ -350,6 +368,24 @@ jobs:
         exec /opt/NexusEngine/run.sh "$@"
         EOF
         chmod +x "${DEB_STAGING}/usr/bin/nexusengine"
+
+        mkdir -p "${DEB_STAGING}/usr/share/pixmaps"
+        [ -f "Data/UI/icon.png" ] && cp "Data/UI/icon.png" "${DEB_STAGING}/usr/share/pixmaps/nexusengine.png"
+
+        mkdir -p "${DEB_STAGING}/usr/share/applications"
+        cat > "${DEB_STAGING}/usr/share/applications/nexusengine.desktop" << EOF
+        [Desktop Entry]
+        Version=1.0
+        Name=Nexus Engine
+        Name[zh_CN]=联结引擎
+        Comment=Nexus Engine 3D Application
+        Comment[zh_CN]=面向信创的数字孪生具身智能仿真引擎
+        Exec=/usr/bin/nexusengine
+        Icon=nexusengine
+        Terminal=false
+        Type=Application
+        Categories=Development;Graphics;3DGraphics;
+        EOF
 
         find "${DEB_STAGING}" -type d -exec chmod 755 {} \;
 
