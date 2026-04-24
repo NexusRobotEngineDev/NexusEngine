@@ -162,14 +162,50 @@ jobs:
         chmod +x "${PKG_DIR}/run.sh"
 
         cd build && tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}/"
-        echo "ARTIFACT_PATH=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
+        cd ..
+
+        DEB_STAGING="build/deb_staging"
+        mkdir -p "${DEB_STAGING}/opt/NexusEngine"
+        mkdir -p "${DEB_STAGING}/DEBIAN"
+        mkdir -p "${DEB_STAGING}/usr/bin"
+
+        cp -a "${PKG_DIR}/." "${DEB_STAGING}/opt/NexusEngine/"
+
+        cat > "${DEB_STAGING}/DEBIAN/control" << EOF
+        Package: nexusengine
+        Version: ${{ env.VERSION }}
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Maintainer: NexusTeam <nexus@example.com>
+        Description: Nexus Engine 3D Application
+        EOF
+
+        cat > "${DEB_STAGING}/usr/bin/nexusengine" << 'EOF'
+        #!/bin/bash
+        exec /opt/NexusEngine/run.sh "$@"
+        EOF
+        chmod +x "${DEB_STAGING}/usr/bin/nexusengine"
+
+        find "${DEB_STAGING}" -type d -exec chmod 755 {} \;
+
+        dpkg-deb --build "${DEB_STAGING}" "build/${PKG_NAME}.deb"
+
+        echo "ARTIFACT_PATH_DEB=build/${PKG_NAME}.deb" >> $GITHUB_ENV
+        echo "ARTIFACT_PATH_TAR=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
         echo "ARTIFACT_NAME=${PKG_NAME}" >> $GITHUB_ENV
 
-    - name: Upload Linux Package
+    - name: Upload Linux Package (DEB)
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.ARTIFACT_NAME }}
-        path: ${{ env.ARTIFACT_PATH }}
+        name: ${{ env.ARTIFACT_NAME }}-deb
+        path: ${{ env.ARTIFACT_PATH_DEB }}
+
+    - name: Upload Linux Package (TAR.GZ)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}-tar
+        path: ${{ env.ARTIFACT_PATH_TAR }}
 
   package-linux-arm64:
     runs-on: ubuntu-24.04-arm
@@ -269,11 +305,47 @@ jobs:
         chmod +x "${PKG_DIR}/run.sh"
 
         cd build && tar -czvf "${PKG_NAME}.tar.gz" "${PKG_NAME}/"
-        echo "ARTIFACT_PATH=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
+        cd ..
+
+        DEB_STAGING="build/deb_staging"
+        mkdir -p "${DEB_STAGING}/opt/NexusEngine"
+        mkdir -p "${DEB_STAGING}/DEBIAN"
+        mkdir -p "${DEB_STAGING}/usr/bin"
+
+        cp -a "${PKG_DIR}/." "${DEB_STAGING}/opt/NexusEngine/"
+
+        cat > "${DEB_STAGING}/DEBIAN/control" << EOF
+        Package: nexusengine
+        Version: ${{ env.VERSION }}
+        Section: utils
+        Priority: optional
+        Architecture: arm64
+        Maintainer: NexusTeam <nexus@example.com>
+        Description: Nexus Engine 3D Application
+        EOF
+
+        cat > "${DEB_STAGING}/usr/bin/nexusengine" << 'EOF'
+        #!/bin/bash
+        exec /opt/NexusEngine/run.sh "$@"
+        EOF
+        chmod +x "${DEB_STAGING}/usr/bin/nexusengine"
+
+        find "${DEB_STAGING}" -type d -exec chmod 755 {} \;
+
+        dpkg-deb --build "${DEB_STAGING}" "build/${PKG_NAME}.deb"
+
+        echo "ARTIFACT_PATH_DEB=build/${PKG_NAME}.deb" >> $GITHUB_ENV
+        echo "ARTIFACT_PATH_TAR=build/${PKG_NAME}.tar.gz" >> $GITHUB_ENV
         echo "ARTIFACT_NAME=${PKG_NAME}" >> $GITHUB_ENV
 
-    - name: Upload Linux Package
+    - name: Upload Linux Package (DEB)
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.ARTIFACT_NAME }}
-        path: ${{ env.ARTIFACT_PATH }}
+        name: ${{ env.ARTIFACT_NAME }}-deb
+        path: ${{ env.ARTIFACT_PATH_DEB }}
+
+    - name: Upload Linux Package (TAR.GZ)
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}-tar
+        path: ${{ env.ARTIFACT_PATH_TAR }}
