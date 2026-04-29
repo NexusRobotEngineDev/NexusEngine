@@ -64,18 +64,22 @@ public:
     EditorUIManager() = default;
     ~EditorUIManager() = default;
 
+    static EditorUIManager* Get();
+
     bool initialize(VK_UIBridge* uiBridge);
     void shutdown();
     void registerPanel(std::unique_ptr<Panel> panel, const std::string& defaultDockZone);
     void floatPanel(const std::string& panelId, float x, float y);
     void dockPanel(const std::string& panelId, const std::string& dockZoneId);
-    void update(Scene* scene);
+    void update(Scene* scene, float dt);
     uint32_t getSelectedEntityId() const {
         return m_selectedEntity.isValid() ? (uint32_t)m_selectedEntity.getHandle() : 0xFFFFFFFF;
     }
     bool saveLayout(const std::string& filePath);
     bool loadLayout(const std::string& filePath);
     void ProcessEvent(Rml::Event& event) override;
+
+    Rml::ElementDocument* getEditorDoc() const { return m_editorDoc; }
 
 private:
     void setupEventListeners();

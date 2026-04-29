@@ -40,6 +40,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(Python COMPONENTS Interpreter Development REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
 
 FetchContent_Declare(
     cesium-native
@@ -54,8 +56,13 @@ FetchContent_MakeAvailable(cesium-native)
 add_subdirectory(src/Bridge)
 add_subdirectory(src/Core)
 
-add_executable(NexusApp src/App/Main.cpp)
-target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge spdlog::spdlog fmt::fmt)
+add_executable(NexusApp 
+    src/App/Main.cpp
+    src/Bindings/Python/PybindModule.cpp 
+    src/Bindings/Python/PybindUI.cpp
+    src/Bindings/Python/PybindECS.cpp
+)
+target_link_libraries(NexusApp PRIVATE Core BridgeImpl Bridge spdlog::spdlog fmt::fmt pybind11::embed)
 if(MSVC)
     set_target_properties(NexusApp PROPERTIES LINK_FLAGS "/FORCE:MULTIPLE")
 endif()
@@ -64,5 +71,6 @@ add_custom_command(TARGET NexusApp POST_BUILD
         ${CMAKE_CURRENT_SOURCE_DIR}/Data
         $<TARGET_FILE_DIR:NexusApp>/Data
 )
+
 
 add_subdirectory(tests)
