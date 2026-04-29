@@ -111,6 +111,7 @@ Status VK_Texture::create(uint32_t width, uint32_t height, TextureFormat format,
     vk::Format vkFormat = (format == TextureFormat::BGRA8_UNORM) ? vk::Format::eB8G8R8A8Unorm : vk::Format::eR8G8B8A8Unorm;
     vk::ImageCreateInfo imageInfo({}, vk::ImageType::e2D, vkFormat, {m_width, m_height, 1}, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled);
     if (usage == TextureUsage::Attachment) imageInfo.usage |= vk::ImageUsageFlagBits::eColorAttachment;
+    if (usage == TextureUsage::Storage) imageInfo.usage |= vk::ImageUsageFlagBits::eStorage;
     auto imgResult = device.createImage(imageInfo);
     if (imgResult.result != vk::Result::eSuccess) return InternalError("Failed to create attachment image");
     m_image = imgResult.value;

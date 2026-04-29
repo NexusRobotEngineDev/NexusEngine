@@ -4,6 +4,8 @@
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
+#include <glm/gtc/type_ptr.hpp>
+#include "../../Core/GaussianSplattingLoader.h"
 
 namespace Nexus {
 
@@ -101,6 +103,29 @@ Status VK_Renderer::initialize() {
             NX_CORE_WARN("Meshlet pipeline creation failed, mesh shader culling disabled: {}", status.message());
         }
     }
+
+    NX_CORE_INFO("VK_Renderer::initialize - 2.7: init Gaussian Renderer");
+    {
+        auto colorFmt = m_swapchain->getImageFormat();
+        auto depthFmt = m_swapchain->getDepthFormat();
+        if (depthFmt == vk::Format::eUndefined) depthFmt = vk::Format::eD32Sfloat;
+        m_gaussianRenderer = std::make_unique<VK_GaussianRenderer>(m_context);
+        if (auto status = m_gaussianRenderer->initialize(colorFmt, depthFmt); !status.ok()) {
+            NX_CORE_WARN("Gaussian Renderer init failed: {}", status.message());
+            m_gaussianRenderer.reset();
+        } else {
+            std::string plyPath = "Data/Models/test.ply";
+            NX_CORE_INFO("VK_Renderer: Loading 3DGS from {}", plyPath);
+            auto splats = Core::GaussianSplattingLoader::loadFromPLY(plyPath);
+            if (splats.ok()) {
+                m_gaussianRenderer->uploadSplatData(splats.value());
+                NX_CORE_INFO("3DGS loaded {} splats and uploaded to GPU", splats.value().size());
+            } else {
+                NX_CORE_WARN("Failed to load 3DGS file: {}", splats.status().message());
+            }
+        }
+    }
+
     NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
@@ -259,7 +284,7 @@ void VK_Renderer::updatePersistentSlot(uint32_t slot, const ObjectData& obj, con
 void VK_Renderer::setPersistentSlotVisibility(uint32_t slot, bool visible) {
     PersistentSlotUpdate update;
     update.slot = slot;
-    update.type = 1; // 1 means visibility update only
+    update.type = 1;
     update.obj.isVisible = visible ? 1 : 0;
     m_slotUpdateQueue.push(update);
 }
@@ -837,6 +862,12 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             }
         }
 
+        if (m_gaussianRenderer && m_gaussianRenderer->getSplatCount() > 0 && snapshot) {
+            glm::mat4 vMat = glm::make_mat4(snapshot->mainCameraView.data());
+            glm::mat4 pMat = glm::make_mat4(snapshot->mainCameraProj.data());
+            m_gaussianRenderer->recordDraw(commandBuffer, vMat, pMat, extent.width, extent.height);
+        }
+
         if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
 
             if (m_meshletBuffer) {
@@ -1183,6 +1214,12 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
         recordOffscreenCommandBuffer(m_commandBuffers[m_currentFrame], snapshot);
     }
     auto __t5 = std::chrono::high_resolution_clock::now();
+
+    if (m_gaussianRenderer && m_gaussianRenderer->getSplatCount() > 0 && snapshot) {
+        auto screenExt = m_swapchain->getExtent();
+        glm::mat4 vMat = glm::make_mat4(snapshot->mainCameraView.data());
+        m_gaussianRenderer->recordCompute(m_commandBuffers[m_currentFrame], vMat, screenExt.width, screenExt.height);
+    }
 
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
     auto __t6 = std::chrono::high_resolution_clock::now();

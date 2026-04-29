@@ -506,6 +506,8 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             viewProj = multiplyMat4(proj, view);
             mainCameraProcessed = true;
             snapshot->mainCameraPosition = {pos[0], pos[1], pos[2]};
+            snapshot->mainCameraView = view;
+            snapshot->mainCameraProj = proj;
         }
     }
 
