@@ -143,6 +143,7 @@ private:
     bool m_meshletPipelineReady = false;
 
     std::unique_ptr<VK_GaussianRenderer> m_gaussianRenderer;
+    std::string m_currentSplatPath = "";
 
     struct alignas(16) MeshletInstanceData {
         uint32_t meshletOffset;

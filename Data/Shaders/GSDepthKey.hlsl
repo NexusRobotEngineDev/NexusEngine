@@ -27,7 +27,7 @@ void main(uint3 DTid : SV_DispatchThreadID) {
     }
 
     float3 pos_raw = splats[idx].pos_opacity.xyz;
-    float3 pos = float3(pos_raw.x, pos_raw.z, -pos_raw.y);
+    float3 pos = float3(pos_raw.x, -pos_raw.y, -pos_raw.z);
     float4 viewPos = mul(pc.view, float4(pos, 1.0));
     float opacity = 1.0 / (1.0 + exp(-splats[idx].pos_opacity.w));
 

@@ -81,7 +81,7 @@ bool PyUIWrapper::setElementAttribute(const std::string& elementId, const std::s
     auto el = ui->getEditorDoc()->GetElementById(elementId);
     if (!el) return false;
     
-    if (attr == "value" && el->IsClassSet("focused")) {
+    if (attr == "value" && el->IsPseudoClassSet("focus")) {
         return true;
     }
     

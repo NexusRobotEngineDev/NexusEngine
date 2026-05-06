@@ -178,4 +178,16 @@ struct RigidBodyComponent {
     }
 };
 
+/**
+ * @brief 3D高斯渲染组件
+ */
+struct GaussianSplatComponent {
+    std::string plyPath;
+
+    template<class Archive>
+    void serialize(Archive& ar) {
+        ar(plyPath);
+    }
+};
+
 } // namespace Nexus

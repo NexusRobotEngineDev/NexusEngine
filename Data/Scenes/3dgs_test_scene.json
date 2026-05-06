@@ -8,5 +8,10 @@
       3.0
     ]
   },
-  "objects": []
+  "objects": [
+    {
+      "type": "gaussian_splat",
+      "plyPath": "Models/test.ply"
+    }
+  ]
 }

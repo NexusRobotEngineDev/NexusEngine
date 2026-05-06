@@ -11,6 +11,7 @@ namespace py = pybind11;
 
 namespace Nexus {
     extern std::atomic<uint32_t> g_RenderStats_DrawCalls;
+    extern std::atomic<uint32_t> g_RenderStats_APIDraws;
     extern std::atomic<uint32_t> g_RenderStats_Triangles;
     extern std::atomic<float> g_RenderStats_FPS;
     extern std::atomic<float> g_RenderStats_FrameTime;
@@ -31,6 +32,7 @@ PYBIND11_EMBEDDED_MODULE(nexus_engine, m) {
     m.def("get_fps", []() { return Nexus::g_RenderStats_FPS.load(std::memory_order_relaxed); });
     m.def("get_frame_time", []() { return Nexus::g_RenderStats_FrameTime.load(std::memory_order_relaxed); });
     m.def("get_draw_calls", []() { return Nexus::g_RenderStats_DrawCalls.load(std::memory_order_relaxed); });
+    m.def("get_api_draws", []() { return Nexus::g_RenderStats_APIDraws.load(std::memory_order_relaxed); });
     m.def("get_triangles", []() { return Nexus::g_RenderStats_Triangles.load(std::memory_order_relaxed); });
 
     Nexus::BindUI(m);

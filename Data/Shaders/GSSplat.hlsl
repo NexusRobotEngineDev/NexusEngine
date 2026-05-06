@@ -40,8 +40,8 @@ static const float2 quadOffsets[4] = {
 
 static const float3x3 R_COORD = float3x3(
     1,  0,  0,
-    0,  0,  1,
-    0, -1,  0
+    0, -1,  0,
+    0,  0, -1
 );
 
 VSOutput vsMain(VSInput input) {
@@ -50,8 +50,13 @@ VSOutput vsMain(VSInput input) {
     output.color = float4(0,0,0,0);
     output.conicOpacity = float4(0,0,0,0);
 
-    uint splatIdx = input.instanceID;
+    uint sortedIdx = input.instanceID;
+    uint splatIdx = sortKeysAndValues[sortedIdx].y;
     GaussianSplat splat = splats[splatIdx];
+
+    float qlen = length(splat.rot);
+    float4 q = qlen > 0.0001 ? splat.rot / qlen : float4(1, 0, 0, 0);
+    splat.rot = q;
 
     float3 pos_raw = splat.pos_opacity.xyz;
     float3 pos_w = mul(R_COORD, pos_raw);
@@ -84,8 +89,8 @@ VSOutput vsMain(VSInput input) {
 
     float3x3 W = (float3x3)ubo.view;
 
-    float4 q = splat.rot;
-    float r = q.x, x = q.y, y = q.z, z = q.w;
+    float4 q_rot = splat.rot;
+    float r = q_rot.x, x = q_rot.y, y = q_rot.z, z = q_rot.w;
     float3x3 Rot = float3x3(
         1.0 - 2.0*(y*y + z*z), 2.0*(x*y - r*z),       2.0*(x*z + r*y),
         2.0*(x*y + r*z),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z - r*x),

@@ -1,0 +1,16 @@
+{
+  "name": "HongKong",
+  "camera": {
+    "position": [
+      0.0,
+      0.0,
+      50.0
+    ]
+  },
+  "enable_gis": true,
+  "gis_origin": [
+    114.1694,
+    22.3193,
+    50.0
+  ]
+}

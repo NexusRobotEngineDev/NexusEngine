@@ -18,9 +18,6 @@ struct GaussianSplatData {
     glm::vec4 color;            /**< xyz: 球谐函数基础颜色(DC) */
 };
 
-/**
- * @brief 3D Gaussian Splatting (3DGS) 模型加载器
- */
 class GaussianSplattingLoader {
 public:
     /**

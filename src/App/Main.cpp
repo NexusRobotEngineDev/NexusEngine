@@ -8,6 +8,8 @@
 #include "MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <cmath>
 #include <filesystem>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -29,6 +31,7 @@
 #include "Core/CesiumComponents.h"
 #include <CesiumGeospatial/Cartographic.h>
 #include <CesiumGeospatial/Ellipsoid.h>
+#include "Core/GaussianSplattingLoader.h"
 
 #include <pybind11/embed.h>
 namespace py = pybind11;
@@ -255,9 +258,9 @@ Status InitializeEngine(const EngineConfig& config, bool onlineMode, bool disabl
         NX_CORE_INFO("Main: Creating Cesium Test Entity");
         Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
         auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
-        georef.m_longitude = 121.5;
-        georef.m_latitude = 25.0;
-        georef.m_height = 50.0;
+        georef.m_longitude = sceneConfig.gisOrigin[0];
+        georef.m_latitude = sceneConfig.gisOrigin[1];
+        georef.m_height = sceneConfig.gisOrigin[2];
 
     auto cameraView = g_scene->getRegistry().view<CameraComponent, TransformComponent>();
     for (auto c : cameraView) {
@@ -589,8 +592,19 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         snapshot->totalTriangles += mesh.indexCount / 3;
         snapshot->meshCount++;
     }
-
     snapshot->mainCameraViewProj = viewProj;
+
+    auto gsView = registry.view<GaussianSplatComponent, TransformComponent>();
+    for (auto e : gsView) {
+        auto [gs, transform] = gsView.get<GaussianSplatComponent, TransformComponent>(e);
+        if (!gs.plyPath.empty()) {
+            RenderSnapshot::GSSplatInfo info;
+            info.plyPath = gs.plyPath;
+            glm::mat4 m = glm::make_mat4(transform.worldMatrix.data());
+            memcpy(info.worldMatrix.data(), glm::value_ptr(m), sizeof(float) * 16);
+            snapshot->gaussianSplats.push_back(info);
+        }
+    }
 }
 
 void RunMainLoop() {

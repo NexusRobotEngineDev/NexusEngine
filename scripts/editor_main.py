@@ -1,17 +1,31 @@
 import sys
 import nexus_engine
 
+import time
+
 last_entity_count = -1
 selected_entity_id = -1
 prev_selected_entity_id = -1
 
+expanded_nodes = set()
+last_rebuild_time = 0.0
+force_rebuild = False
+
 def rebuild_hierarchy(ui):
-    global last_entity_count
+    global last_entity_count, last_rebuild_time, force_rebuild
     
     count = nexus_engine.get_scene_entity_count()
-    if count == last_entity_count:
-        return
+    now = time.time()
+    
+    if not force_rebuild:
+        if count == last_entity_count:
+            return
+        if now - last_rebuild_time < 0.5:
+            return
+
     last_entity_count = count
+    last_rebuild_time = now
+    force_rebuild = False
 
     all_ents = nexus_engine.get_all_entities()
     roots = [e for e in all_ents if e.get_parent() == -1]
@@ -24,13 +38,14 @@ def rebuild_hierarchy(ui):
         name = entity.name
         
         has_children = entity.has_children()
-        prefix = "[-] " if has_children else "    "
+        is_expanded = entity.id in expanded_nodes
+        prefix = "[-] " if (has_children and is_expanded) else ("[+] " if has_children else "    ")
         
         cls = "tree-node selected" if entity.id == selected_entity_id else "tree-node"
         
         html += f'<div class="{cls}" id="entity-{entity.id}" style="padding-left: {pad}dp">{prefix}{name}</div>'
         
-        if has_children:
+        if has_children and is_expanded:
             for child in entity.get_children():
                 build_tree(child, depth + 1)
                 
@@ -55,13 +70,15 @@ def update_selection_highlight(ui):
 
 def on_update(dt):
     fps = nexus_engine.get_fps()
-    draw_calls = nexus_engine.get_draw_calls()
+    api_draws = nexus_engine.get_api_draws()
+    visible_meshes = nexus_engine.get_draw_calls()
     triangles = nexus_engine.get_triangles()
     frame_time = nexus_engine.get_frame_time()
 
     ui = nexus_engine.UIWrapper()
     ui.set_element_rml("prop-fps", f"{fps:.1f}")
-    ui.set_element_rml("prop-draw-calls", str(draw_calls))
+    ui.set_element_rml("prop-api-draws", str(api_draws))
+    ui.set_element_rml("prop-visible-meshes", str(visible_meshes))
     ui.set_element_rml("prop-triangles", str(triangles))
     ui.set_element_rml("prop-frame-time", f"{frame_time:.2f} ms")
 
@@ -77,16 +94,32 @@ def on_update(dt):
             ui.set_element_attribute("prop-pos-x", "value", f"{pos[0]:.4f}")
             ui.set_element_attribute("prop-pos-y", "value", f"{pos[1]:.4f}")
             ui.set_element_attribute("prop-pos-z", "value", f"{pos[2]:.4f}")
+            rot = ent.get_rotation()
+            ui.set_element_attribute("prop-rot-x", "value", f"{rot[0]:.4f}")
+            ui.set_element_attribute("prop-rot-y", "value", f"{rot[1]:.4f}")
+            ui.set_element_attribute("prop-rot-z", "value", f"{rot[2]:.4f}")
 
 def on_hierarchy_click(params):
-    global selected_entity_id
+    global selected_entity_id, expanded_nodes, force_rebuild
     
     ent_id_str = params.get("id", "")
+    nexus_engine.log_info(f"[Python] Clicked on id: {ent_id_str}")
+    
     if ent_id_str.startswith("entity-"):
         try:
-            selected_entity_id = int(ent_id_str.split("-")[1])
-        except:
-            pass
+            eid = int(ent_id_str.split("-")[1])
+            selected_entity_id = eid
+            
+            if eid in expanded_nodes:
+                expanded_nodes.remove(eid)
+                nexus_engine.log_info(f"[Python] Collapsed node {eid}")
+            else:
+                expanded_nodes.add(eid)
+                nexus_engine.log_info(f"[Python] Expanded node {eid}")
+                
+            force_rebuild = True
+        except Exception as e:
+            nexus_engine.log_info(f"[Python] Error in click: {str(e)}")
 
 def on_prop_change(params):
     global selected_entity_id
@@ -101,13 +134,19 @@ def on_prop_change(params):
         return
     
     pos = list(ent.get_position())
+    rot = list(ent.get_rotation())
     
     el_id = params.get("id", "")
-    if el_id == "prop-pos-x": pos[0] = val
-    elif el_id == "prop-pos-y": pos[1] = val
-    elif el_id == "prop-pos-z": pos[2] = val
-    
-    ent.set_position(pos[0], pos[1], pos[2])
+    if el_id.startswith("prop-pos"):
+        if el_id == "prop-pos-x": pos[0] = val
+        elif el_id == "prop-pos-y": pos[1] = val
+        elif el_id == "prop-pos-z": pos[2] = val
+        ent.set_position(pos[0], pos[1], pos[2])
+    elif el_id.startswith("prop-rot"):
+        if el_id == "prop-rot-x": rot[0] = val
+        elif el_id == "prop-rot-y": rot[1] = val
+        elif el_id == "prop-rot-z": rot[2] = val
+        ent.set_rotation(rot[0], rot[1], rot[2])
 
 def main():
     nexus_engine.log_info("Python Editor Script Initializing...")
@@ -118,6 +157,9 @@ def main():
     ui.register_event_callback("prop-pos-x", "change", on_prop_change)
     ui.register_event_callback("prop-pos-y", "change", on_prop_change)
     ui.register_event_callback("prop-pos-z", "change", on_prop_change)
+    ui.register_event_callback("prop-rot-x", "change", on_prop_change)
+    ui.register_event_callback("prop-rot-y", "change", on_prop_change)
+    ui.register_event_callback("prop-rot-z", "change", on_prop_change)
     
     nexus_engine.log_info("Python Editor Setup Complete.")
 

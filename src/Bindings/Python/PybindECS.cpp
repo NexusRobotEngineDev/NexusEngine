@@ -3,6 +3,8 @@
 #include "../../Core/Scene.h"
 #include "../../Core/Components.h"
 #include "../../Bridge/Entity.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace Nexus {
 
@@ -90,6 +92,31 @@ void BindECS(py::module& m) {
                 t.position[2] = z;
             }
         }
+
+        std::vector<float> get_rotation_euler() const {
+            if (!is_valid()) return {0,0,0};
+            Entity e(static_cast<entt::entity>(handle), &g_scene->getRegistry());
+            if (e.hasComponent<TransformComponent>()) {
+                auto& t = e.getComponent<TransformComponent>();
+                glm::quat q(t.rotation[3], t.rotation[0], t.rotation[1], t.rotation[2]);
+                glm::vec3 euler = glm::degrees(glm::eulerAngles(q));
+                return {euler.x, euler.y, euler.z};
+            }
+            return {0,0,0};
+        }
+
+        void set_rotation_euler(float x, float y, float z) {
+            if (!is_valid()) return;
+            Entity e(static_cast<entt::entity>(handle), &g_scene->getRegistry());
+            if (e.hasComponent<TransformComponent>()) {
+                auto& t = e.getComponent<TransformComponent>();
+                glm::quat q = glm::quat(glm::radians(glm::vec3(x, y, z)));
+                t.rotation[0] = q.x;
+                t.rotation[1] = q.y;
+                t.rotation[2] = q.z;
+                t.rotation[3] = q.w;
+            }
+        }
     };
 
     py::class_<PyEntity>(m, "Entity")
@@ -101,7 +128,9 @@ void BindECS(py::module& m) {
         .def("get_children", &PyEntity::get_children)
         .def("get_parent", &PyEntity::get_parent)
         .def("get_position", &PyEntity::get_position)
-        .def("set_position", &PyEntity::set_position);
+        .def("set_position", &PyEntity::set_position)
+        .def("get_rotation", &PyEntity::get_rotation_euler)
+        .def("set_rotation", &PyEntity::set_rotation_euler);
 
     m.def("get_all_entities", []() {
         std::vector<PyEntity> entities;
