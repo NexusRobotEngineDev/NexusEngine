@@ -27,6 +27,7 @@
     "draco",
     "glm",
     "openssl",
-    "concurrentqueue"
+    "concurrentqueue",
+    "pybind11"
   ]
 }

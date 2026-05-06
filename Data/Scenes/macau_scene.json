@@ -1,0 +1,16 @@
+{
+  "name": "Macau",
+  "camera": {
+    "position": [
+      0.0,
+      0.0,
+      100.0
+    ]
+  },
+  "enable_gis": true,
+  "gis_origin": [
+    113.5439,
+    22.1898,
+    100.0
+  ]
+}

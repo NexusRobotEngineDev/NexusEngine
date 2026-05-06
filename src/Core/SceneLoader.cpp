@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 using json = nlohmann::json;
 
@@ -17,6 +19,12 @@ namespace Core {
 static std::array<float, 3> readVec3(const json& j, const std::string& key, std::array<float, 3> def = {0,0,0}) {
     if (j.contains(key) && j[key].is_array() && j[key].size() >= 3)
         return {j[key][0].get<float>(), j[key][1].get<float>(), j[key][2].get<float>()};
+    return def;
+}
+
+static std::array<double, 3> readVec3d(const json& j, const std::string& key, std::array<double, 3> def = {0,0,0}) {
+    if (j.contains(key) && j[key].is_array() && j[key].size() >= 3)
+        return {j[key][0].get<double>(), j[key][1].get<double>(), j[key][2].get<double>()};
     return def;
 }
 
@@ -54,6 +62,10 @@ StatusOr<SceneLoader::SceneConfig> SceneLoader::parseSceneFile(const std::string
         config.enableGis = j.value("enable_gis", true);
     }
 
+    if (j.contains("gis_origin")) {
+        config.gisOrigin = readVec3d(j, "gis_origin", {121.5, 25.0, 50.0});
+    }
+
     if (j.contains("robot")) {
         config.robotUrdf    = j["robot"].value("urdf", "");
         config.robotPhysics = j["robot"].value("physics", "");
@@ -71,10 +83,12 @@ StatusOr<SceneLoader::SceneConfig> SceneLoader::parseSceneFile(const std::string
             def.modelPath = obj.value("model", obj.value("modelPath", ""));
             def.type     = def.modelPath.empty() ? obj.value("type", "box") : "model";
             def.position = readVec3(obj, "position");
+            def.rotation = readVec3(obj, "rotation", {0, 0, 0});
             def.size     = readVec3(obj, "size", {1, 1, 1});
             def.color    = readVec4(obj, "color");
             def.metallic = obj.value("metallic", 0.0f);
             def.roughness = obj.value("roughness", 1.0f);
+            def.plyPath  = obj.value("plyPath", "");
             config.objects.push_back(def);
         }
     }
@@ -118,12 +132,29 @@ Status SceneLoader::createEntities(
             if (entity.isValid()) {
                 auto& tr = entity.getComponent<TransformComponent>();
                 tr.position = obj.position;
+                glm::quat q = glm::quat(glm::radians(glm::vec3(obj.rotation[0], obj.rotation[1], obj.rotation[2])));
+                tr.rotation = {q.x, q.y, q.z, q.w};
                 tr.scale = obj.size;
             }
+        } else if (obj.type == "gaussian_splat" && !obj.plyPath.empty()) {
+            std::string fullPlyPath = "Data/" + obj.plyPath;
+            if (obj.plyPath.substr(0, 5) == "Data/") {
+                fullPlyPath = obj.plyPath;
+            }
+            Entity entity = scene->createEntity("GaussianSplat_" + std::to_string(i));
+            auto& tr = entity.getComponent<TransformComponent>();
+            tr.position = obj.position;
+            glm::quat q = glm::quat(glm::radians(glm::vec3(obj.rotation[0], obj.rotation[1], obj.rotation[2])));
+            tr.rotation = {q.x, q.y, q.z, q.w};
+            tr.scale = obj.size;
+            auto& gs = entity.addComponent<GaussianSplatComponent>();
+            gs.plyPath = fullPlyPath;
         } else {
             Entity entity = scene->createEntity("Object_" + std::to_string(i));
             auto& tr = entity.getComponent<TransformComponent>();
             tr.position = obj.position;
+            glm::quat q = glm::quat(glm::radians(glm::vec3(obj.rotation[0], obj.rotation[1], obj.rotation[2])));
+            tr.rotation = {q.x, q.y, q.z, q.w};
             tr.scale = obj.size;
             if (renderer) {
                 auto mesh = renderer->getCubeMeshComponent();

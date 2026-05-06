@@ -16,6 +16,7 @@
 #include "../ECS.h"
 #include "../../Core/Components.h"
 #include "VK_Buffer.h"
+#include "VK_GaussianRenderer.h"
 
 namespace Nexus {
 
@@ -140,6 +141,9 @@ private:
     std::unique_ptr<VK_Buffer> m_meshletInstanceBuffer;
     std::unique_ptr<VK_Buffer> m_meshletIndirectBuffer;
     bool m_meshletPipelineReady = false;
+
+    std::unique_ptr<VK_GaussianRenderer> m_gaussianRenderer;
+    std::string m_currentSplatPath = "";
 
     struct alignas(16) MeshletInstanceData {
         uint32_t meshletOffset;

@@ -23,11 +23,13 @@ public:
     struct ObjectDef {
         std::string type;
         std::array<float, 3> position = {0,0,0};
+        std::array<float, 3> rotation = {0,0,0};
         std::array<float, 3> size = {1,1,1};
         std::array<float, 4> color = {1,1,1,1};
         float metallic = 0.0f;
         float roughness = 1.0f;
         std::string modelPath;
+        std::string plyPath;
     };
 
     struct SceneConfig {
@@ -39,6 +41,7 @@ public:
         std::array<float, 2> groundSize = {20.f, 20.f};
         std::array<float, 4> groundColor = {0.6f, 0.6f, 0.6f, 1.f};
         bool enableGis = true;
+        std::array<double, 3> gisOrigin = {121.5, 25.0, 50.0};
         std::vector<ObjectDef> objects;
     };
 

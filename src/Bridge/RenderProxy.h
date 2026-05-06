@@ -65,6 +65,18 @@ struct RenderSnapshot {
         0.0f, 0.0f, 1.0f, 0.0f,
         0.0f, 0.0f, 0.0f, 1.0f
     };
+    std::array<float, 16> mainCameraView = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
+    std::array<float, 16> mainCameraProj = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
 
     struct MeshletDrawEntry {
         uint32_t meshletOffset;
@@ -76,6 +88,12 @@ struct RenderSnapshot {
     std::vector<MeshletDrawEntry> meshletDraws;
     std::array<float, 3> mainCameraPosition = {0.0f, 0.0f, 0.0f};
 
+    struct GSSplatInfo {
+        std::string plyPath;
+        std::array<float, 16> worldMatrix;
+    };
+    std::vector<GSSplatInfo> gaussianSplats;
+
     void clear() {
         frameObjects.clear();
         for (auto& b : batches) {
@@ -83,6 +101,7 @@ struct RenderSnapshot {
         }
         batches.clear();
         meshletDraws.clear();
+        gaussianSplats.clear();
         totalTriangles = 0;
         meshCount = 0;
         visionSensorValid = false;

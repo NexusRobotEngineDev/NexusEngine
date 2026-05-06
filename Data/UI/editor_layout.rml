@@ -56,8 +56,16 @@
                         <input id="prop-pos-z" type="text" class="prop-value" value="0.0"/>
                     </div>
                     <div class="prop-row">
-                        <span class="prop-label">Rot</span>
-                        <span id="prop-rot" class="prop-value" style="background-color: transparent; border-width: 0; color: #bac2de; font-size: 11dp;">-</span>
+                        <span class="prop-label">Rot X</span>
+                        <input id="prop-rot-x" type="text" class="prop-value" value="0.0"/>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Rot Y</span>
+                        <input id="prop-rot-y" type="text" class="prop-value" value="0.0"/>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">Rot Z</span>
+                        <input id="prop-rot-z" type="text" class="prop-value" value="0.0"/>
                     </div>
                     <div class="prop-row">
                         <span class="prop-label">Scale</span>
@@ -120,8 +128,12 @@
                         <span id="prop-render-draw-time" class="prop-value" style="background-color: transparent; border-width: 0; color: #f38ba8;">0.00 ms</span>
                     </div>
                     <div class="prop-row">
-                        <span class="prop-label">Draw Calls</span>
-                        <span id="prop-draw-calls" class="prop-value" style="background-color: transparent; border-width: 0; color: #cdd6f4;">0</span>
+                        <span class="prop-label">Visible Meshes</span>
+                        <span id="prop-visible-meshes" class="prop-value" style="background-color: transparent; border-width: 0; color: #cdd6f4;">0</span>
+                    </div>
+                    <div class="prop-row">
+                        <span class="prop-label">API Draw Calls</span>
+                        <span id="prop-api-draws" class="prop-value" style="background-color: transparent; border-width: 0; color: #cdd6f4;">0</span>
                     </div>
                     <div class="prop-row">
                         <span class="prop-label">Triangles</span>

@@ -8,6 +8,8 @@
 #include "MuJoCo/MuJoCo_PhysicsSystem.h"
 #include <cmath>
 #include <filesystem>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #if ENABLE_VULKAN
 #include "Vk/VK_Context.h"
@@ -29,8 +31,10 @@
 #include "Core/CesiumComponents.h"
 #include <CesiumGeospatial/Cartographic.h>
 #include <CesiumGeospatial/Ellipsoid.h>
+#include "Core/GaussianSplattingLoader.h"
 
-
+#include <pybind11/embed.h>
+namespace py = pybind11;
 #if defined(_MSC_VER)
 extern "C" {
     #include <string.h>
@@ -46,11 +50,13 @@ using namespace Nexus::Core;
 std::string g_sceneOverridePath;
 
 namespace Nexus {
+    extern std::function<void(float)> g_pythonUpdateCallback;
     extern std::atomic<float> g_RenderStats_FPS;
     extern std::atomic<float> g_RenderStats_FrameTime;
     extern std::atomic<float> g_RenderStats_LogicTime;
     extern std::atomic<float> g_RenderStats_RenderSyncTime;
     extern std::atomic<float> g_RenderStats_RenderPrepTime;
+    std::unique_ptr<Scene> g_scene;
 }
 
 namespace {
@@ -69,7 +75,6 @@ std::unique_ptr<Core::RenderSystem> g_renderer;
 std::unique_ptr<EditorUIManager> g_editorUIManager;
 #endif
 
-std::unique_ptr<Scene> g_scene;
 std::unique_ptr<TextureManager> g_textureManager;
 #include <array>
 #include <atomic>
@@ -253,9 +258,9 @@ Status InitializeEngine(const EngineConfig& config, bool onlineMode, bool disabl
         NX_CORE_INFO("Main: Creating Cesium Test Entity");
         Entity cesiumEnt = g_scene->createEntity("Cesium_Test_Tileset");
         auto& georef = cesiumEnt.addComponent<CesiumGeoreference>();
-        georef.m_longitude = 121.5;
-        georef.m_latitude = 25.0;
-        georef.m_height = 50.0;
+        georef.m_longitude = sceneConfig.gisOrigin[0];
+        georef.m_latitude = sceneConfig.gisOrigin[1];
+        georef.m_height = sceneConfig.gisOrigin[2];
 
     auto cameraView = g_scene->getRegistry().view<CameraComponent, TransformComponent>();
     for (auto c : cameraView) {
@@ -506,6 +511,8 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
             viewProj = multiplyMat4(proj, view);
             mainCameraProcessed = true;
             snapshot->mainCameraPosition = {pos[0], pos[1], pos[2]};
+            snapshot->mainCameraView = view;
+            snapshot->mainCameraProj = proj;
         }
     }
 
@@ -585,8 +592,19 @@ void buildSnapshotFromRegistry(Registry& registry, RenderSnapshot* snapshot) {
         snapshot->totalTriangles += mesh.indexCount / 3;
         snapshot->meshCount++;
     }
-
     snapshot->mainCameraViewProj = viewProj;
+
+    auto gsView = registry.view<GaussianSplatComponent, TransformComponent>();
+    for (auto e : gsView) {
+        auto [gs, transform] = gsView.get<GaussianSplatComponent, TransformComponent>(e);
+        if (!gs.plyPath.empty()) {
+            RenderSnapshot::GSSplatInfo info;
+            info.plyPath = gs.plyPath;
+            glm::mat4 m = glm::make_mat4(transform.worldMatrix.data());
+            memcpy(info.worldMatrix.data(), glm::value_ptr(m), sizeof(float) * 16);
+            snapshot->gaussianSplats.push_back(info);
+        }
+    }
 }
 
 void RunMainLoop() {
@@ -821,8 +839,17 @@ void RunMainLoop() {
             if (uiBridge) {
                 if (uiBridge->tryLockUI()) {
                     if (g_editorUIManager) {
-                        g_editorUIManager->update(g_scene.get());
+                        g_editorUIManager->update(g_scene.get(), deltaTime);
                     }
+
+                    if (Nexus::g_pythonUpdateCallback) {
+                        try {
+                            Nexus::g_pythonUpdateCallback(deltaTime);
+                        } catch (py::error_already_set& e) {
+                            NX_CORE_ERROR("Python update error: {}", e.what());
+                        }
+                    }
+
                     uiBridge->updateUI();
                     uiBridge->unlockUI();
                 }
@@ -946,6 +973,26 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    Log::info("Initializing Python scoped_interpreter, relying on system PATH or default environment...");
+    
+    std::unique_ptr<py::scoped_interpreter> guard;
+    try {
+        guard = std::make_unique<py::scoped_interpreter>();
+        Log::info("Python interpreter initialized successfully.");
+        
+        py::module_ sys = py::module_::import("sys");
+        sys.attr("path").attr("append")(ResourceLoader::getBasePath());
+        
+        Log::info("Evaluating editor_main.py...");
+        py::eval_file(ResourceLoader::getBasePath() + "scripts/editor_main.py");
+        Log::info("Finished evaluating editor_main.py");
+    } catch (const std::exception& e) {
+        Log::error("Python Exception: {}", e.what());
+    } catch (...) {
+        Log::error("Unknown Python initialization error!");
+    }
+
+    Log::info("Entering RunMainLoop...");
     RunMainLoop();
     Log::info("Nexus Engine Shutting down...");
     ShutdownEngine();

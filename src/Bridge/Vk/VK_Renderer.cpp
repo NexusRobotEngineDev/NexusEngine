@@ -4,11 +4,14 @@
 #include "ResourceLoader.h"
 #include "Log.h"
 #include "VK_UIBridge.h"
+#include <glm/gtc/type_ptr.hpp>
+#include "../../Core/GaussianSplattingLoader.h"
 
 namespace Nexus {
 
 
 std::atomic<uint32_t> g_RenderStats_DrawCalls{0};
+std::atomic<uint32_t> g_RenderStats_APIDraws{0};
 std::atomic<uint32_t> g_RenderStats_Triangles{0};
 
 VK_Renderer::VK_Renderer(VK_Context* context, VK_Swapchain* swapchain)
@@ -101,6 +104,19 @@ Status VK_Renderer::initialize() {
             NX_CORE_WARN("Meshlet pipeline creation failed, mesh shader culling disabled: {}", status.message());
         }
     }
+
+    NX_CORE_INFO("VK_Renderer::initialize - 2.7: init Gaussian Renderer");
+    {
+        auto colorFmt = m_swapchain->getImageFormat();
+        auto depthFmt = m_swapchain->getDepthFormat();
+        if (depthFmt == vk::Format::eUndefined) depthFmt = vk::Format::eD32Sfloat;
+        m_gaussianRenderer = std::make_unique<VK_GaussianRenderer>(m_context);
+        if (auto status = m_gaussianRenderer->initialize(colorFmt, depthFmt); !status.ok()) {
+            NX_CORE_WARN("Gaussian Renderer init failed: {}", status.message());
+            m_gaussianRenderer.reset();
+        }
+    }
+
     NX_CORE_INFO("VK_Renderer::initialize - 3: createCommandBuffers");
     if (auto status = createCommandBuffers(); !status.ok()) return status;
     NX_CORE_INFO("VK_Renderer::initialize - 4: createSyncObjects");
@@ -259,7 +275,7 @@ void VK_Renderer::updatePersistentSlot(uint32_t slot, const ObjectData& obj, con
 void VK_Renderer::setPersistentSlotVisibility(uint32_t slot, bool visible) {
     PersistentSlotUpdate update;
     update.slot = slot;
-    update.type = 1; // 1 means visibility update only
+    update.type = 1;
     update.obj.isVisible = visible ? 1 : 0;
     m_slotUpdateQueue.push(update);
 }
@@ -837,6 +853,16 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             }
         }
 
+        if (m_gaussianRenderer && m_gaussianRenderer->getSplatCount() > 0 && snapshot) {
+            glm::mat4 vMat = glm::make_mat4(snapshot->mainCameraView.data());
+            glm::mat4 pMat = glm::make_mat4(snapshot->mainCameraProj.data());
+            if (!snapshot->gaussianSplats.empty()) {
+                glm::mat4 modelMat = glm::make_mat4(snapshot->gaussianSplats[0].worldMatrix.data());
+                vMat = vMat * modelMat;
+            }
+            m_gaussianRenderer->recordDraw(commandBuffer, vMat, pMat, extent.width, extent.height);
+        }
+
         if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) {
 
             if (m_meshletBuffer) {
@@ -910,6 +936,12 @@ void VK_Renderer::recordCommandBuffer(vk::CommandBuffer commandBuffer, uint32_t 
             }
         }
 
+        uint32_t apiDraws = 0;
+        if (activeEntitiesCount > 0) apiDraws++;
+        if (m_gaussianRenderer && m_gaussianRenderer->getSplatCount() > 0 && snapshot) apiDraws++;
+        if (m_meshletPipelineReady && !snapshot->meshletDraws.empty()) apiDraws++;
+
+        g_RenderStats_APIDraws.store(apiDraws, std::memory_order_relaxed);
         g_RenderStats_DrawCalls.store(snapshot->meshCount, std::memory_order_relaxed);
         g_RenderStats_Triangles.store(snapshot->totalTriangles, std::memory_order_relaxed);
 
@@ -1137,6 +1169,21 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
     auto __t1 = std::chrono::high_resolution_clock::now();
 
     if (snapshot) {
+        if (!snapshot->gaussianSplats.empty()) {
+            const auto& splatInfo = snapshot->gaussianSplats[0];
+            std::string plyPath = splatInfo.plyPath;
+            if (m_currentSplatPath != plyPath && m_gaussianRenderer) {
+                m_currentSplatPath = plyPath;
+                NX_CORE_INFO("VK_Renderer: Loading 3DGS from {}", plyPath);
+                auto splats = Core::GaussianSplattingLoader::loadFromPLY(plyPath);
+                if (splats.ok()) {
+                    m_gaussianRenderer->uploadSplatData(splats.value());
+                    NX_CORE_INFO("3DGS loaded {} splats and uploaded to GPU", splats.value().size());
+                } else {
+                    NX_CORE_WARN("Failed to load 3DGS file: {}", splats.status().message());
+                }
+            }
+        }
         uploadSnapshotData(snapshot);
     }
     auto __t2 = std::chrono::high_resolution_clock::now();
@@ -1183,6 +1230,16 @@ Status VK_Renderer::renderFrame(RenderSnapshot* snapshot) {
         recordOffscreenCommandBuffer(m_commandBuffers[m_currentFrame], snapshot);
     }
     auto __t5 = std::chrono::high_resolution_clock::now();
+
+    if (m_gaussianRenderer && m_gaussianRenderer->getSplatCount() > 0 && snapshot) {
+        auto screenExt = m_swapchain->getExtent();
+        glm::mat4 vMat = glm::make_mat4(snapshot->mainCameraView.data());
+        if (!snapshot->gaussianSplats.empty()) {
+            glm::mat4 modelMat = glm::make_mat4(snapshot->gaussianSplats[0].worldMatrix.data());
+            vMat = vMat * modelMat;
+        }
+        m_gaussianRenderer->recordCompute(m_commandBuffers[m_currentFrame], vMat, screenExt.width, screenExt.height);
+    }
 
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, snapshot);
     auto __t6 = std::chrono::high_resolution_clock::now();
